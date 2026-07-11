@@ -5,8 +5,22 @@ Phase 0 of a single-user Rolex market-tracking dashboard. It provides password-b
 ## Local setup
 
 1. Copy `.env.example` to `.env.local` and set a real password and session secret.
-2. Start Postgres locally and set `DATABASE_URL`.
-3. Run `npm install`, then `npm run db:migrate` and `npm run dev`.
+2. Install [Postgres.app](https://postgresapp.com/), move it to Applications, open it, and click **Initialize**. It runs a local PostgreSQL server on `localhost:5432` using your macOS username with no password by default.
+3. Add Postgres.app's command-line tools to your Bash PATH once:
+
+   ```bash
+   echo 'export PATH="/Applications/Postgres.app/Contents/Versions/latest/bin:$PATH"' >> ~/.bash_profile
+   source ~/.bash_profile
+   ```
+
+   Then create the app database:
+
+   ```bash
+   createdb crown_tracker
+   ```
+
+   The `DATABASE_URL` in `.env.local` should remain `postgresql://localhost:5432/crown_tracker`.
+4. Run `npm install`, then `npm run db:migrate` and `npm run dev`.
 
 The login is intentionally a single env-var password for this one-user Phase 0 app. It is not multi-user authentication.
 

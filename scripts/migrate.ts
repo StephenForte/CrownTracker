@@ -1,7 +1,10 @@
-import "dotenv/config";
+import { config } from "dotenv";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { Pool } from "pg";
+
+config({ path: ".env.local" });
+config();
 
 type Seller = { name: string; domain: string; platform: string; jurisdiction: string; trustScore: number };
 type Jurisdiction = { code: string; modifier: number; note: string };

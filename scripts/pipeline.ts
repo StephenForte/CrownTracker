@@ -1,4 +1,7 @@
-import "dotenv/config";
+import { config } from "dotenv";
+
+config({ path: ".env.local" });
+config();
 
 const tier = process.argv.find((argument) => argument.startsWith("--tier="))?.split("=")[1] ?? "daily";
 
