@@ -34,6 +34,6 @@ export function lookupReference(reference: string): WatchDraft {
     discontinued: false,
     photoSourceUrl: null,
     specs: {},
-    source: { name: "WatchBase fallback", url: "https://watchbase.com/", note: "No Phase 0 catalog match. Confirm the reference against Rolex, or WatchBase for discontinued models, then complete the fields manually." },
+    source: { name: "WatchBase fallback", url: "https://watchbase.com/", note: "No starter-catalog match. Confirm the reference against Rolex, or WatchBase for discontinued models, then complete the fields manually." },
   };
 }
