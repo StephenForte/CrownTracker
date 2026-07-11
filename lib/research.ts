@@ -25,6 +25,8 @@ export async function researchWatch(pool: Pool, watch: Watch, runId: string) {
   const allowedResults = discovered.filter((result) => sellerForUrl(result.url, sellers)).slice(0, 10);
   let pagesRead = 0;
   let savedListings = 0;
+  let scopeMatchedListings = 0;
+  const scopeExclusions = new Map<string, number>();
 
   for (const result of allowedResults) {
     try {
@@ -38,25 +40,29 @@ export async function researchWatch(pool: Pool, watch: Watch, runId: string) {
       const scope = evaluateScope(listing, watch);
       await saveListing(pool, runId, watch.id, seller.id, result.url, listing, scope);
       savedListings += 1;
+      if (scope.matches) scopeMatchedListings += 1;
+      else if (scope.reason) scopeExclusions.set(scope.reason, (scopeExclusions.get(scope.reason) ?? 0) + 1);
     } catch (error) {
       console.warn(JSON.stringify({ event: "listing_skipped", watchId: watch.id, url: result.url, error: errorMessage(error) }));
     }
   }
 
   await createSnapshot(pool, watch.id, runId);
-  return { discoveryQueries: 1, pagesRead, savedListings, discovered: discovered.length };
+  return {
+    discoveryQueries: 1, pagesRead, savedListings, scopeMatchedListings, scopeExcludedListings: savedListings - scopeMatchedListings,
+    scopeExclusions: [...scopeExclusions.entries()].map(([reason, count]) => ({ reason, count })), discovered: discovered.length,
+  };
 }
 
 async function discoverListings(watch: Watch, sellers: Seller[]): Promise<DiscoveryResult[]> {
   const apiKey = process.env.TAVILY_API_KEY;
   if (!apiKey) throw new Error("TAVILY_API_KEY is required for the daily market-research pipeline.");
-  const sellerDomains = sellers.map((seller) => seller.domain).join(" OR site:");
   const nickname = watch.nickname ? ` ${watch.nickname}` : "";
-  const query = `Rolex ${watch.reference_number}${nickname} for sale (site:${sellerDomains})`;
+  const query = `Rolex ${watch.reference_number}${nickname} for sale`;
   const response = await fetch("https://api.tavily.com/search", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({ query, search_depth: "basic", max_results: 20, include_answer: false }),
+    body: JSON.stringify({ query, search_depth: "basic", max_results: 20, include_answer: false, include_domains: sellers.map((seller) => seller.domain) }),
     signal: AbortSignal.timeout(20_000),
   });
   if (!response.ok) throw new Error(`Tavily discovery failed with HTTP ${response.status}.`);
@@ -213,7 +219,6 @@ function evaluateScope(listing: ListingData, watch: Watch) {
   if (watch.scope.papers === "required" && !listing.hasPapers) reasons.push("Papers are not confirmed.");
   if (watch.scope.box === "required" && !listing.hasBox) reasons.push("Box is not confirmed.");
   if (watch.scope.warranty === "factory_remaining" && listing.warranty !== "factory") reasons.push("Factory warranty is not confirmed.");
-  if (watch.scope.warranty === "third_party_ok" && !listing.warranty) reasons.push("Warranty is not confirmed.");
   if (watch.scope.yearMin && (!listing.productionYear || listing.productionYear < watch.scope.yearMin)) reasons.push("Production year is below the selected range or unknown.");
   if (watch.scope.yearMax && (!listing.productionYear || listing.productionYear > watch.scope.yearMax)) reasons.push("Production year is above the selected range or unknown.");
   return { matches: reasons.length === 0, reason: reasons.join(" ") || null };
