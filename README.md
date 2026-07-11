@@ -1,6 +1,6 @@
 # Crown Tracker
 
-Phase 0 of a single-user Rolex market-tracking dashboard. It provides password-based access, Postgres-backed watch CRUD, a spec-lookup confirmation flow, Render deployment configuration, and the future pipeline's CLI seam.
+Single-user Rolex market-tracking dashboard. It provides password-based access, Postgres-backed watch CRUD, a spec-lookup confirmation flow, and a daily, auditable market-research pipeline.
 
 ## Local setup
 
@@ -22,14 +22,22 @@ Phase 0 of a single-user Rolex market-tracking dashboard. It provides password-b
    The `DATABASE_URL` in `.env.local` should remain `postgresql://localhost:5432/crown_tracker`.
 4. Run `npm install`, then `npm run db:migrate` and `npm run dev`.
 
-The login is intentionally a single env-var password for this one-user Phase 0 app. It is not multi-user authentication.
+To run the Phase 1 daily research job locally, add `TAVILY_API_KEY` to `.env.local`, then run:
 
-## Data and source policy
+```bash
+npm run pipeline -- --tier=daily
+```
 
-The Phase 0 lookup catalog gives instant confirmation for common references. Its first source of record is Rolex official product information; the documented fallback for discontinued references is WatchBase. Phase 1 will use Tavily discovery plus robots-respecting HTTP retrieval to refresh and validate this information. No browser automation or credentialed scraping is included.
+The login is intentionally a single env-var password for this one-user app. It is not multi-user authentication.
 
-`npm run pipeline -- --tier=daily` is deliberately a logged no-op today. Render Cron Jobs run that exact command, so Phase 1 can add pipeline work without changing deployment architecture.
+## Phase 1 market research
+
+The lookup catalog gives instant confirmation for common references. Its first source of record is Rolex official product information; the documented fallback for discontinued references is WatchBase.
+
+Each daily job discovers pages only on the curated seller domains, checks the destination's `robots.txt` before retrieving it, and accepts a listing only when the page contains structured Product/Offer pricing. The job stores each observed price and a per-watch market snapshot. It does not use browser automation, authenticated scraping, currency conversion, or LLM extraction.
+
+The dashboard includes only USD listings that meet the watch's saved condition, papers, box, warranty, and production-year requirements. When a required detail is absent, the listing is deliberately excluded rather than guessed.
 
 ## Deploy
 
-Connect the repository to Render and apply `render.yaml`. Set `APP_PASSWORD`; Render generates `SESSION_SECRET` and wires `DATABASE_URL`. The first release command should be `npm run db:migrate` (or run it from Render Shell) before using the app.
+Connect the repository to Render and apply `render.yaml`. Set `APP_PASSWORD` and `TAVILY_API_KEY`; Render generates `SESSION_SECRET` and wires `DATABASE_URL`. The first release command should be `npm run db:migrate` (or run it from Render Shell) before using the app. The daily cron runs the research pipeline; the chatter and monthly jobs remain intentionally inert placeholders for later phases.
