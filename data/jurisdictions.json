@@ -1,0 +1,6 @@
+[
+  { "code": "US", "modifier": 0, "note": "Established buyer-protection and legal recourse." },
+  { "code": "UK", "modifier": 0, "note": "Established buyer-protection and legal recourse." },
+  { "code": "DE", "modifier": 0, "note": "Marketplace protections still vary by seller and payment method." },
+  { "code": "UNKNOWN", "modifier": -10, "note": "Unknown jurisdiction requires extra verification." }
+]
