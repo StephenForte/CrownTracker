@@ -4,6 +4,7 @@ services:
     name: crown-tracker
     plan: starter
     buildCommand: npm ci && npm run build
+    preDeployCommand: npm run db:migrate
     startCommand: npm start
     healthCheckPath: /login
     envVars:
