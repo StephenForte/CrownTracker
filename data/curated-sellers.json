@@ -3,5 +3,10 @@
   { "name": "Bob's Watches", "domain": "bobswatches.com", "platform": "Dealer", "jurisdiction": "US", "trustScore": 90 },
   { "name": "Crown & Caliber", "domain": "crownandcaliber.com", "platform": "Dealer", "jurisdiction": "US", "trustScore": 90 },
   { "name": "Watchfinder", "domain": "watchfinder.com", "platform": "Dealer", "jurisdiction": "UK", "trustScore": 90 },
-  { "name": "Chrono24", "domain": "chrono24.com", "platform": "Marketplace", "jurisdiction": "DE", "trustScore": 85 }
+  { "name": "Chrono24", "domain": "chrono24.com", "platform": "Marketplace", "jurisdiction": "DE", "trustScore": 85 },
+  { "name": "SwissWatchExpo", "domain": "swisswatchexpo.com", "platform": "Dealer", "jurisdiction": "US", "trustScore": 88 },
+  { "name": "Luxury Bazaar", "domain": "luxurybazaar.com", "platform": "Dealer", "jurisdiction": "US", "trustScore": 88 },
+  { "name": "European Watch Company", "domain": "europeanwatch.com", "platform": "Dealer", "jurisdiction": "US", "trustScore": 90 },
+  { "name": "DavidSW", "domain": "davidsw.com", "platform": "Dealer", "jurisdiction": "US", "trustScore": 92 },
+  { "name": "Jomashop", "domain": "jomashop.com", "platform": "Dealer", "jurisdiction": "US", "trustScore": 82 }
 ]

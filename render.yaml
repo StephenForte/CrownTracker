@@ -30,6 +30,12 @@ services:
           property: connectionString
       - key: TAVILY_API_KEY
         sync: false
+      - key: TAVILY_MONTHLY_CREDIT_CAP
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: ANTHROPIC_HAIKU_MODEL
+        value: claude-haiku-4-5-20251001
 
   - type: cron
     runtime: node

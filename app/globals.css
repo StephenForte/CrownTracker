@@ -23,6 +23,16 @@ h2 { font-size: 28px; }
 .card, .panel { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 20px; }
 .card { min-height: 210px; display: flex; flex-direction: column; justify-content: space-between; text-decoration: none; transition: transform .15s ease; }
 .card:hover { transform: translateY(-2px); }
+.market-card { min-height: 250px; }
+.card-heading, .panel-row, .card-footer, .detail-actions { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.metric-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 22px 0; }
+.metric-pair > div { display: grid; gap: 5px; }
+.metric-pair span, .metric-pair small, .card-footer, .listing-table small { color: var(--muted); font-size: 12px; }
+.metric-pair strong { font-family: Georgia, serif; font-size: 21px; }
+.freshness { display: inline-block; border-radius: 99px; padding: 4px 7px; font-size: 11px; font-weight: 800; white-space: nowrap; background: #edf3ee; color: var(--forest); }
+.freshness.stale { background: #fff3d8; color: #825d13; }
+.freshness.outdated { background: #f9e2e0; color: var(--danger); }
+.freshness.gathering { background: #ecece6; color: var(--muted); }
 .watch-ref { font-family: Georgia, serif; font-size: 26px; }
 .price { font-size: 20px; font-weight: 800; margin-top: 18px; }
 .empty { border: 1px dashed #c5c5bc; border-radius: 10px; padding: 38px; color: var(--muted); text-align: center; }
@@ -54,6 +64,18 @@ textarea { min-height: 100px; resize: vertical; }
 .market-stats span, .listing-table span, .history-list span { color: var(--muted); font-size: 13px; }
 .market-stats strong { font-size: 20px; }
 .market-note { color: var(--muted); font-size: 13px; line-height: 1.45; margin: 20px 0 0; }
+.metric-panel { min-height: 285px; }
+.metric-panel.outdated h2 { color: var(--muted); }
+.metric-subline { margin: 18px 0 0; font-size: 13px; font-weight: 700; }
+.provenance { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 12px; color: var(--muted); font-size: 13px; line-height: 1.45; }
+.provenance summary { cursor: pointer; color: var(--forest); font-weight: 800; }
+.provenance ul { padding-left: 18px; max-height: 170px; overflow: auto; }
+.provenance li { margin: 8px 0; }
+.trust { display: inline-block; border-radius: 99px; padding: 3px 6px; background: #e5f0e7; color: var(--forest); font-size: 10px; white-space: nowrap; }
+.trust.caution { background: #fff3d8; color: #825d13; }
+.trust.high-risk { background: #f9e2e0; color: var(--danger); }
+.warning { display: block; color: var(--danger) !important; font-weight: 800; margin-top: 4px; }
+.refresh-control { display: grid; gap: 6px; justify-items: end; max-width: 260px; }
 .listing-table { display: grid; margin-top: 14px; border-top: 1px solid var(--line); }
 .listing-table a { display: flex; justify-content: space-between; gap: 20px; padding: 14px 0; border-bottom: 1px solid var(--line); text-decoration: none; }
 .listing-table a > div { display: grid; gap: 5px; min-width: 0; }
@@ -63,5 +85,5 @@ textarea { min-height: 100px; resize: vertical; }
 .listing-table span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 520px; }
 .history-list { display: grid; gap: 0; margin-top: 14px; }
 .history-list div { display: grid; grid-template-columns: 130px 1fr auto; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
-@media (max-width: 640px) { .market-stats { grid-template-columns: 1fr; } .listing-table a { display: grid; } .listing-table a > div:last-child { text-align: left; } .history-list div { grid-template-columns: 1fr; gap: 4px; } }
+@media (max-width: 640px) { .market-stats, .metric-pair { grid-template-columns: 1fr; } .listing-table a { display: grid; } .listing-table a > div:last-child { text-align: left; } .history-list div { grid-template-columns: 1fr; gap: 4px; } }
 @media (max-width: 640px) { .shell { padding: 0 16px 32px; } .hero, .detail-header { display: block; } .hero .button { display: inline-block; margin-top: 20px; } .form-grid { grid-template-columns: 1fr; } .lookup { display: grid; } .kv { grid-template-columns: 1fr; gap: 4px; } }

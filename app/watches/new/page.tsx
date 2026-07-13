@@ -7,5 +7,5 @@ export const dynamic = "force-dynamic";
 
 export default async function NewWatchPage() {
   if (!(await hasSession())) redirect("/login");
-  return <AppShell><main className="form-page"><div className="eyebrow">New tracked watch</div><h1>Add a reference with its market definition.</h1><p className="muted">The market pipeline is not active yet; this creates the durable identity and scope it will use.</p><NewWatchForm /></main></AppShell>;
+  return <AppShell><main className="form-page"><div className="eyebrow">New tracked watch</div><h1>Add a reference with its market definition.</h1><p className="muted">Save the identity and scope, then use Refresh now to begin a grounded market scan.</p><NewWatchForm /></main></AppShell>;
 }
