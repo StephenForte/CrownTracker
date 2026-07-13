@@ -2,17 +2,20 @@ import { db } from "@/lib/db";
 import { ACTIVE_LISTING_WINDOW_DAYS } from "@/lib/phase1b";
 
 export type MetricSnapshot = {
-  id: string; metric: "grey_avg" | "resell_avg" | "availability"; value: string | null; value_low: string | null; value_high: string | null;
+  id: string; metric: "grey_avg" | "resell_avg" | "availability" | "waitlist" | "sentiment"; value: string | null; value_low: string | null; value_high: string | null;
   label: string | null; n: number; n_uncertain: number; outliers_dropped: number; conf_sample: number; conf_diversity: number; conf_agreement: number;
   confidence: "high" | "medium" | "low" | "insufficient"; provenance: "live" | "backfill" | "carried_forward"; computed_at: Date;
 };
 export type MarketListing = {
   id: string; source_url: string; detail_url: string | null; title: string; price_usd: string | null; price_original: string | null; currency: string | null;
   condition: string | null; scope_match_class: "in_scope" | "out_of_scope" | "uncertain"; scope_reason: string | null; anomaly_flags: string[];
-  last_seen_at: Date; seller_name: string | null; seller_domain: string | null; seller_platform: string | null; seller_jurisdiction: string | null; trust_score: number | null; curated: boolean | null;
+  last_seen_at: Date; seller_name: string | null; seller_domain: string | null; seller_platform: string | null; seller_jurisdiction: string | null; trust_score: number | null; trust_rationale: string | null; curated: boolean | null;
 };
 export type Evidence = { id: string; url: string; domain: string; quote: string; retrieved_at: Date };
 export type MovingAverage = { value: string | null; weeks: number; hasFullYear: boolean; backfillCount: number };
+export type CommunityAnecdote = { id: string; source_url: string; domain: string; quote: string; reported_at: Date | null; wait_months: string | null; region: string | null; purchase_context: string | null; retrieved_at: Date };
+export type NewsItem = { id: string; source_url: string; domain: string; title: string; summary: string; quote: string; published_at: Date | null; retrieved_at: Date };
+export type ScopeChange = { id: string; changed_at: Date; old_scope: Record<string, unknown>; new_scope: Record<string, unknown> };
 
 export async function getLatestMetrics(watchIds: string[]) {
   const metrics = new Map<string, Map<MetricSnapshot["metric"], MetricSnapshot>>();
@@ -28,18 +31,37 @@ export async function getLatestMetrics(watchIds: string[]) {
   return metrics;
 }
 
+export async function getSevenDayMovers(watchIds: string[]) {
+  const movers = new Map<string, number>();
+  if (!watchIds.length) return movers;
+  const result = await db.query<{ watch_id: string; current: string | null; prior: string | null }>(
+    `WITH ranked AS (
+       SELECT watch_id, value, computed_at,
+         row_number() OVER (PARTITION BY watch_id ORDER BY computed_at DESC) AS newest,
+         row_number() OVER (PARTITION BY watch_id ORDER BY computed_at ASC) AS oldest
+       FROM metric_snapshots
+       WHERE watch_id = ANY($1::uuid[]) AND metric = 'resell_avg' AND value IS NOT NULL AND computed_at >= now() - interval '7 days'
+     ) SELECT watch_id, max(value) FILTER (WHERE newest = 1) AS current, max(value) FILTER (WHERE oldest = 1) AS prior FROM ranked GROUP BY watch_id`, [watchIds],
+  );
+  for (const row of result.rows) if (row.current && row.prior && Number(row.prior) !== 0) movers.set(row.watch_id, (Number(row.current) - Number(row.prior)) / Number(row.prior));
+  return movers;
+}
+
 export async function getMarketDetails(watchId: string) {
-  const [metrics, listings, movingAverages] = await Promise.all([
+  const [metrics, listings, movingAverages, anecdotes, news, scopeChanges] = await Promise.all([
     db.query<MetricSnapshot>(`SELECT * FROM metric_snapshots WHERE watch_id = $1 ORDER BY computed_at DESC LIMIT 40`, [watchId]),
     db.query<MarketListing>(
       `SELECT l.id, l.source_url, l.detail_url, l.title, l.price_usd, l.price_original, l.currency, l.condition, l.scope_match_class, l.scope_reason, l.anomaly_flags, l.last_seen_at,
-              s.name AS seller_name, s.domain AS seller_domain, s.platform AS seller_platform, s.jurisdiction AS seller_jurisdiction, s.trust_score, s.curated
+              s.name AS seller_name, s.domain AS seller_domain, s.platform AS seller_platform, s.jurisdiction AS seller_jurisdiction, s.trust_score, s.trust_rationale, s.curated
        FROM market_listings l LEFT JOIN sellers s ON s.id = l.seller_id
        WHERE l.watch_id = $1 AND l.is_active = true AND l.scope_match_class IN ('in_scope', 'uncertain') AND l.price_usd IS NOT NULL
          AND l.last_seen_at > now() - ($2 || ' days')::interval
        ORDER BY s.trust_score DESC NULLS LAST, l.price_usd ASC, l.last_seen_at DESC LIMIT 40`, [watchId, ACTIVE_LISTING_WINDOW_DAYS],
     ),
     getMovingAverages(watchId),
+    db.query<CommunityAnecdote>("SELECT * FROM community_anecdotes WHERE watch_id = $1 ORDER BY reported_at DESC NULLS LAST, retrieved_at DESC LIMIT 20", [watchId]),
+    db.query<NewsItem>("SELECT DISTINCT ON (source_url) * FROM news_items WHERE watch_id = $1 AND retrieved_at >= now() - ($2 || ' days')::interval ORDER BY source_url, retrieved_at DESC LIMIT 5", [watchId, NEWS_WINDOW_DAYS]),
+    db.query<ScopeChange>("SELECT * FROM scope_changes WHERE watch_id = $1 ORDER BY changed_at DESC LIMIT 12", [watchId]),
   ]);
   const latest = new Map<MetricSnapshot["metric"], MetricSnapshot>();
   for (const metric of metrics.rows) if (!latest.has(metric.metric)) latest.set(metric.metric, metric);
@@ -47,8 +69,10 @@ export async function getMarketDetails(watchId: string) {
   const evidence = snapshotIds.length ? await db.query<Evidence & { attached_id: string }>("SELECT id, attached_id, url, domain, quote, retrieved_at FROM evidence WHERE attached_to = 'snapshot' AND attached_id = ANY($1::uuid[]) ORDER BY retrieved_at DESC", [snapshotIds]) : { rows: [] as Array<Evidence & { attached_id: string }> };
   const evidenceBySnapshot = new Map<string, Evidence[]>();
   for (const item of evidence.rows) evidenceBySnapshot.set(item.attached_id, [...(evidenceBySnapshot.get(item.attached_id) ?? []), item]);
-  return { latest, metrics: metrics.rows, listings: listings.rows, movingAverages, evidenceBySnapshot };
+  return { latest, metrics: metrics.rows, listings: listings.rows, movingAverages, evidenceBySnapshot, anecdotes: anecdotes.rows, news: news.rows, scopeChanges: scopeChanges.rows };
 }
+
+const NEWS_WINDOW_DAYS = 30;
 
 async function getMovingAverages(watchId: string) {
   const result = await db.query<{ metric: "grey_avg" | "resell_avg"; value: string | null; first_at: Date | null; points: string; backfill_count: string }>(
