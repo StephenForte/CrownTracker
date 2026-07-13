@@ -28,7 +28,7 @@ To run the Phase 1A-safe daily research job locally, add `TAVILY_API_KEY` to `.e
 npm run pipeline -- --tier=daily
 ```
 
-Phase 1B’s expanded price scan additionally requires `ANTHROPIC_API_KEY` and an intentional positive `TAVILY_MONTHLY_CREDIT_CAP`. The cap is **credits, not dollars**, and is atomically counted in Postgres before every search request; expanded (advanced) searches consume two credits each. At Tavily's current $0.008 PAYG rate, `1250` is approximately a $10 cap before any account-level free credits. Without both values the pipeline stays on the one-query Phase 1A-safe path. The detail page’s **Refresh now** action is limited to five scans per day.
+Phase 1B’s expanded price scan and Phase 2’s chatter, news, and seller-research scans additionally require `ANTHROPIC_API_KEY` and an intentional positive `TAVILY_MONTHLY_CREDIT_CAP`. The cap is **credits, not dollars**, and is atomically counted in Postgres before every search request; expanded (advanced) searches consume two credits each. At Tavily's current $0.008 PAYG rate, `1250` is approximately a $10 cap before any account-level free credits. Without both values the daily pipeline stays on the one-query Phase 1A-safe path, while Phase 2 runs are recorded as failed rather than silently producing unsourced estimates. The detail page’s **Refresh now** action is limited to five scans per day.
 
 The login is intentionally a single env-var password for this one-user app. It is not multi-user authentication.
 
@@ -40,6 +40,12 @@ Each daily job discovers pages only on curated seller domains and checks the des
 
 The dashboard separates **Avg asking (grey)** (unworn) from **Avg asking (resell)** (pre-owned), applies IQR outlier removal before a weighted median, and surfaces confidence, staleness, evidence, availability, and curated-seller trust. Asking prices are not transaction prices.
 
+## Phase 2 judgment layer
+
+The Mon/Thu cron performs independent chatter and news runs for every active watch. Chatter keeps only dated, source-quoted wait-time anecdotes and models a recency-weighted 25th–75th percentile when at least three reports exist. Sentiment uses a fixed three-dimension rubric and requires three grounded quotes from distinct sources; it is never blended with price movement. News remains a short, source-linked reference-specific list. The monthly job researches only non-curated sellers whose cached score is over 30 days old; seed scores are never overwritten by model inference.
+
+Every Phase 2 HTTP retrieval checks `robots.txt`, fails closed if it cannot be read, identifies CrownTracker, and is limited to one request per five seconds per domain. Source quotes remain capped at 300 characters. Dashboard filters support availability and biggest seven-day resell-price movement; scope changes are shown as history annotations without rewriting snapshots.
+
 ## Deploy
 
-Connect the repository to Render and apply `render.yaml`. Set `APP_PASSWORD` and `TAVILY_API_KEY`; set `TAVILY_MONTHLY_CREDIT_CAP` and `ANTHROPIC_API_KEY` only when you intend to enable paid Phase 1B scans. Render generates `SESSION_SECRET` and wires `DATABASE_URL`. The first release command should be `npm run db:migrate` (or run it from Render Shell) before using the app. The daily cron runs the research pipeline; the chatter and monthly jobs remain intentionally inert placeholders for later phases.
+Connect the repository to Render and apply `render.yaml`. Set `APP_PASSWORD` and `TAVILY_API_KEY`; set `TAVILY_MONTHLY_CREDIT_CAP` and `ANTHROPIC_API_KEY` when you intend to enable paid Phase 1B/2 scans. Render generates `SESSION_SECRET` and wires `DATABASE_URL`. The first release command should be `npm run db:migrate` (or run it from Render Shell) before using the app. The daily cron runs pricing, Mon/Thu runs chatter and news, and the monthly job refreshes non-curated seller research.
