@@ -16,15 +16,17 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
   } else {
     const scope = scopeSchema.safeParse(body.scope);
     if (!scope.success || !hasValidYearRange(scope.data)) return NextResponse.json({ error: "Invalid market scope." }, { status: 400 });
+    const previous = await db.query<{ scope: unknown }>(`SELECT scope FROM watches WHERE ${ownership}`, [id, id, ownerEmail]);
+    if (!previous.rowCount) return NextResponse.json({ error: "Watch not found." }, { status: 404 });
     result = await db.query(`UPDATE watches SET scope = $1::jsonb, updated_at = now() WHERE ${ownership} RETURNING id`, [JSON.stringify(scope.data), id, ownerEmail]);
     scopeChanged = true;
+    await db.query("INSERT INTO scope_changes (watch_id, old_scope, new_scope) VALUES ($1, $2::jsonb, $3::jsonb)", [id, JSON.stringify(previous.rows[0].scope), JSON.stringify(scope.data)]);
   }
   if (!result.rowCount) return NextResponse.json({ error: "Watch not found." }, { status: 404 });
   if (scopeChanged) {
-    await Promise.all([
-      db.query("UPDATE market_listings SET scope_match = false, scope_reason = 'Scope changed; awaiting the next daily validation.' WHERE watch_id = $1", [id]),
-      db.query("DELETE FROM market_snapshots WHERE watch_id = $1", [id]),
-    ]);
+    // History is append-only. The next scan reclassifies active listings against
+    // the new scope without erasing earlier, auditable snapshots.
+    await db.query("UPDATE market_listings SET scope_match = false, scope_match_class = 'out_of_scope', scope_weight = 0, scope_reason = 'Scope changed; awaiting the next scan.' WHERE watch_id = $1", [id]);
   }
   return NextResponse.json({ id });
 }
