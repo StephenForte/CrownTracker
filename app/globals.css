@@ -13,7 +13,7 @@ button { cursor: pointer; }
 .button.secondary, button.secondary { background: #ecece6; color: var(--ink); }
 .button.danger, button.danger { background: var(--danger); }
 .hero { padding: 64px 0 34px; display: flex; justify-content: space-between; gap: 24px; align-items: flex-end; }
-.dashboard-controls { display: flex; align-items: end; gap: 12px; margin: 0 0 18px; }
+.dashboard-controls { display: flex; align-items: flex-end; gap: 12px; margin: 0 0 18px; }
 .dashboard-controls label { display: grid; gap: 5px; color: var(--muted); }
 .dashboard-controls select { min-width: 155px; }
 h1, h2 { font-family: Georgia, serif; margin: 0; }
@@ -37,6 +37,7 @@ h2 { font-size: 28px; }
 .freshness.outdated { background: #f9e2e0; color: var(--danger); }
 .freshness.gathering { background: #ecece6; color: var(--muted); }
 .watch-ref { font-family: Georgia, serif; font-size: 26px; }
+.card-model { color: var(--muted); font-size: 13px; line-height: 1.35; margin: 6px 0 0; }
 .price { font-size: 20px; font-weight: 800; margin-top: 18px; }
 .empty { border: 1px dashed #c5c5bc; border-radius: 10px; padding: 38px; color: var(--muted); text-align: center; }
 .form-page { max-width: 760px; margin: 44px auto; }
@@ -47,8 +48,15 @@ h2 { font-size: 28px; }
 label { font-size: 13px; font-weight: 800; }
 input, select, textarea { padding: 10px 11px; border: 1px solid #c9c9c1; border-radius: 6px; background: white; width: 100%; }
 textarea { min-height: 100px; resize: vertical; }
-.lookup { display: flex; gap: 10px; margin-top: 20px; }
+.reference-lookup { margin-top: 20px; }
+.lookup { display: flex; gap: 10px; margin-top: 7px; }
 .lookup input { max-width: 330px; }
+.field-hint { color: var(--muted); font-size: 12px; line-height: 1.4; margin: 6px 0 0; }
+.catalog-results { border: 1px solid var(--line); border-radius: 7px; margin-top: 10px; overflow: hidden; }
+.catalog-result { align-items: start; background: #fff; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; color: var(--ink); display: grid; gap: 3px; padding: 11px 13px; text-align: left; width: 100%; }
+.catalog-result:last-child { border-bottom: 0; }
+.catalog-result:hover, .catalog-result:focus-visible { background: #fffcf4; color: var(--ink); }
+.catalog-result span { color: var(--muted); font-size: 13px; }
 .confirmation { margin-top: 18px; border-left: 4px solid var(--gold); background: #fffcf4; padding: 18px; }
 .confirmation h2 { margin-bottom: 8px; }
 .source { font-size: 13px; line-height: 1.45; color: var(--muted); }
@@ -58,6 +66,15 @@ textarea { min-height: 100px; resize: vertical; }
 .login .panel { padding: 30px; }
 .detail-header { padding: 45px 0 24px; display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; }
 .detail-header h1 { font-size: 46px; }
+.identity-panel { align-items: center; display: flex; gap: 20px; justify-content: space-between; }
+.identity-panel .muted { margin: 0; max-width: 630px; }
+.inline-editor { display: grid; gap: 10px; min-width: min(100%, 360px); }
+.inline-actions { display: flex; gap: 8px; }
+.checkbox-field { align-items: end; }
+.checkbox-field label { align-items: center; display: flex; gap: 8px; min-height: 42px; }
+.checkbox-field input { width: auto; }
+.form-actions { align-items: center; display: flex; flex-wrap: wrap; gap: 12px; margin-top: 18px; }
+.form-actions .error { margin: 0; }
 .kv { display: grid; grid-template-columns: 170px 1fr; gap: 12px; margin-top: 20px; }
 .kv dt { color: var(--muted); }
 .scope-summary { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
@@ -92,5 +109,5 @@ textarea { min-height: 100px; resize: vertical; }
 .news-list article { padding: 12px 0; border-bottom: 1px solid var(--line); }
 .news-list p { margin: 6px 0; color: var(--muted); }
 .news-list small { color: var(--muted); }
-@media (max-width: 640px) { .market-stats, .metric-pair { grid-template-columns: 1fr; } .listing-table a { display: grid; } .listing-table a > div:last-child { text-align: left; } .history-list div { grid-template-columns: 1fr; gap: 4px; } }
+@media (max-width: 640px) { .market-stats, .metric-pair { grid-template-columns: 1fr; } .listing-table a { display: grid; } .listing-table a > div:last-child { text-align: left; } .history-list div { grid-template-columns: 1fr; gap: 4px; } .identity-panel { align-items: stretch; display: grid; } }
 @media (max-width: 640px) { .shell { padding: 0 16px 32px; } .hero, .detail-header { display: block; } .hero .button { display: inline-block; margin-top: 20px; } .form-grid { grid-template-columns: 1fr; } .lookup, .dashboard-controls { display: grid; } .kv { grid-template-columns: 1fr; gap: 4px; } }

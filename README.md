@@ -34,7 +34,7 @@ The login is intentionally a single env-var password for this one-user app. It i
 
 ## Phase 1 market research
 
-The lookup catalog gives instant confirmation for common references. Its first source of record is Rolex official product information; the documented fallback for discontinued references is WatchBase.
+The lookup catalog gives instant confirmation for common references. On the add-watch screen, search it by reference, model, or nickname; unlisted references still require manual confirmation. Every tracked watch has a required nickname, which keeps the dashboard readable and adds a useful alias to research queries. Existing blank nicknames are backfilled by migration with a clearly editable `Reference <number> — <id>` placeholder. The catalog's first source of record is Rolex official product information; the documented fallback for discontinued references is WatchBase.
 
 Each daily job discovers pages only on curated seller domains and checks the destination's `robots.txt` before retrieving it. In Phase 1B mode it treats each structured Product row as a candidate, optionally fetches its permitted detail page to fill row-level attributes, grounds every retained price against the row/detail source text, normalizes currency to USD, and classifies scope as in-scope, out-of-scope, or uncertain. Unknown required details carry a 0.5 weight rather than being guessed.
 
