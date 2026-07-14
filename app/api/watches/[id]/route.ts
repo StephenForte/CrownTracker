@@ -4,6 +4,7 @@ import { hasSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { ownerEmail } from "@/lib/owner";
 import { hasValidYearRange, scopeSchema } from "@/lib/watch-schema";
+import { isPhase1bEnabled, phase1aScopeError } from "@/lib/phase1b";
 
 const nicknameSchema = z.object({ nickname: z.string().trim().min(2).max(80) });
 
@@ -28,6 +29,8 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
   } else {
     const scope = scopeSchema.safeParse(body.scope);
     if (!scope.success || !hasValidYearRange(scope.data)) return NextResponse.json({ error: "Invalid market scope." }, { status: 400 });
+    const phase1aError = !isPhase1bEnabled() ? phase1aScopeError(scope.data) : null;
+    if (phase1aError) return NextResponse.json({ error: phase1aError }, { status: 400 });
     const previous = await db.query<{ scope: unknown }>(`SELECT scope FROM watches WHERE ${ownership}`, [id, id, ownerEmail]);
     if (!previous.rowCount) return NextResponse.json({ error: "Watch not found." }, { status: 404 });
     result = await db.query(`UPDATE watches SET scope = $1::jsonb, updated_at = now() WHERE ${ownership} RETURNING id`, [JSON.stringify(scope.data), id, ownerEmail]);

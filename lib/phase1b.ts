@@ -1,8 +1,42 @@
+import type { Scope } from "@/lib/watch-schema";
+
+type ResearchEnvironment = Record<string, string | undefined>;
+
 export const UNCERTAIN_LISTING_WEIGHT = 0.5;
 export const DAILY_MANUAL_REFRESH_LIMIT = 5;
 export const PRICE_STALE_AFTER_HOURS = 48;
 export const PRICE_OUTDATED_AFTER_HOURS = 96;
 export const ACTIVE_LISTING_WINDOW_DAYS = 14;
+
+/**
+ * Phase 1B changes the network, provider-cost, and data-quality contract. It
+ * must be deliberately enabled as well as fully configured; credentials alone
+ * never opt a deployment into it.
+ */
+export function isPhase1bRequested(env: ResearchEnvironment = process.env) {
+  return env.PHASE1B_ENRICHMENT_ENABLED === "true";
+}
+
+export function phase1bConfigurationError(env: ResearchEnvironment = process.env) {
+  if (!isPhase1bRequested(env)) return null;
+  const missing = [
+    !env.TAVILY_MONTHLY_CREDIT_CAP && "TAVILY_MONTHLY_CREDIT_CAP",
+    !env.ANTHROPIC_API_KEY && "ANTHROPIC_API_KEY",
+  ].filter(Boolean);
+  if (missing.length) return `PHASE1B_ENRICHMENT_ENABLED=true requires ${missing.join(" and ")}.`;
+  const cap = Number(env.TAVILY_MONTHLY_CREDIT_CAP);
+  return Number.isInteger(cap) && cap > 0 ? null : "TAVILY_MONTHLY_CREDIT_CAP must be a positive integer when Phase 1B is enabled.";
+}
+
+export function isPhase1bEnabled(env: ResearchEnvironment = process.env) {
+  return isPhase1bRequested(env) && phase1bConfigurationError(env) === null;
+}
+
+export function phase1aScopeError(scope: Scope) {
+  if (scope.yearMin !== null || scope.yearMax !== null) return "Production-year bounds require Phase 1B enrichment.";
+  if (scope.warranty !== "none_ok") return "Warranty requirements require Phase 1B enrichment.";
+  return null;
+}
 
 export type Confidence = "high" | "medium" | "low" | "insufficient";
 

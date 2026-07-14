@@ -68,7 +68,7 @@ Single persona: a knowledgeable collector ("Steve") who checks the dashboard a f
 
 ### 3.2 Core flows
 
-**Flow A — Add watch:** Add → type reference number → system does an immediate spec-lookup pass (official specs, photo, retail price) and shows a confirmation card ("Daytona 126500LN, 40mm, White dial — is this right?") → user confirms/edits specs → user sets scope parameters (defaults: any condition, papers required, any year) → save → system enqueues `initial_research` job (full pipeline + historical backfill) → card shows per-field skeleton/"gathering" states until each sub-job lands.
+**Flow A — Add watch:** Add → type reference number → system does an immediate spec-lookup pass (official specs, photo, retail price) and shows a confirmation card ("Daytona 126500LN, 40mm, White dial — is this right?") → user confirms/edits specs → user sets scope parameters (defaults: any condition, papers required, any year, no warranty requirement) → save → card shows per-field skeleton/"gathering" states until the next scheduled scan or a capped manual refresh lands.
 
 **Flow B — Scheduled refresh:** Render cron fires per tier → pipeline CLI loops over active watches sequentially, committing per watch (§6) → new snapshot rows written → dashboard reflects on next load. No user interaction, no queue.
 
@@ -89,14 +89,18 @@ A tracked watch = **identity + specs + scope**. Scope is what makes averages mea
 | Specs | `dial` | string | ✔ if reference has variants | e.g., "White (Panda)". Disambiguates references with multiple dials. |
 | Specs | `bezel`, `bracelet`, `movement`, `material` | strings | auto | Display + listing-matching hints. |
 | Scope | `condition` | enum: `unworn` \| `pre_owned` \| `any` | ✔ | Splits grey vs. resell population (§5.2.3). |
-| Scope | `production_year_min/max` | int range | – | Null = any year. |
+| Scope | `production_year_min/max` | int range | – | Null = any year. Apply only when the year is attached to the individual listing or its detail page; never infer it from collection-page copy. |
 | Scope | `papers` | enum: `required` \| `not_required` | ✔ | "Full set" matching. |
 | Scope | `box` | enum: `required` \| `not_required` | – | Default not_required. |
-| Scope | `warranty` | enum: `factory_remaining` \| `third_party_ok` \| `none_ok` | – | Third-party warranty/market guarantee accepted or not. |
+| Scope | `warranty` | enum: `factory_remaining` \| `third_party_ok` \| `none_ok` | – | `none_ok` means no warranty requirement (default). `factory_remaining` requires explicit factory-warranty evidence. `third_party_ok` accepts factory or third-party coverage when stated; an absent warranty is unknown, not evidence of no coverage. |
 | Meta | `notes` | text | – | Free-form. |
 | Meta | `status` | enum: `active` \| `archived` | auto | |
 
-**Scope matching at ingestion:** every discovered listing is classified against scope by the extraction LLM into `in_scope` / `out_of_scope` / `uncertain`, with the specific failing attribute recorded. `uncertain` listings (listing doesn't state papers, year, etc.) are **included in aggregates at 0.5 weight** and counted separately in the provenance drawer ("14 in-scope + 6 uncertain"). *Assumption: half-weighting uncertain listings beats excluding them (starves small samples) or including them fully (pollutes scope). Builder may tune the weight; keep it a named constant.*
+**Scope matching at ingestion (Phase 1B+):** every discovered listing is classified against scope by the extraction LLM into `in_scope` / `out_of_scope` / `uncertain`, with the specific failing attribute recorded. `uncertain` listings (listing doesn't state papers, year, warranty, etc.) are **included in aggregates at 0.5 weight** and counted separately in the provenance drawer ("14 in-scope + 6 uncertain"). *Assumption: half-weighting uncertain listings beats excluding them (starves small samples) or including them fully (pollutes scope). Builder may tune the weight; keep it a named constant.*
+
+**Listing-level evidence rule (Phase 1B+):** a collection/search page is a discovery surface, not a listing record. The pipeline must create one candidate per visible listing row, preserving that row's title, price text, stable SKU when available, and detail URL. A production year, warranty, condition, papers, or box attribute is valid only when it appears in that same row or on that row's robots-permitted detail page. Do not apply a model introduction year, page publication date, dealer-wide warranty, or other page-level copy to every row. If a permitted detail page cannot supply the attribute, store it as `unknown` with the source URL and continue using the named uncertain-listing policy.
+
+**Phase 1A constraint:** until row/detail extraction exists, keep production-year bounds unset and use `none_ok` for warranty. Phase 1A may show a captured asking price, but it must not claim a listing-level year or warranty it cannot ground.
 
 ---
 
@@ -140,12 +144,13 @@ Definitions (this distinction drives everything):
 Computation (identical machinery, different condition filter):
 
 1. Discovery: per watch, run a fixed query template set against the search API (~6–10 queries: `"{ref}" price`, `"{ref}" "{nickname}" for sale`, plus site-scoped queries against the seed source universe in **Appendix A** — Bob's Watches, SwissWatchExpo, Luxury Bazaar, The 1916 Company, Crown & Caliber, Grailzee completed auctions, StockX, etc.).
-2. Fetch result pages (HTTP GET, robots.txt-respecting, §9); LLM extracts every individual listing: price, currency, condition, year, papers, box, seller name, URL.
-3. Grounding check (anti-hallucination): each extracted price must appear verbatim (post currency-symbol normalization) in the fetched text, verified by regex — extraction rows failing this are dropped and logged.
-4. Dedupe by hash(seller_domain + normalized price + year + condition); listings seen in prior runs are re-observed, not duplicated.
-5. Scope-classify (§4), split by condition into grey vs. resell populations.
-6. Aggregate: **weighted median** (weights: 1.0 in-scope, 0.5 uncertain) after IQR outlier removal (drop outside Q1−1.5·IQR / Q3+1.5·IQR). Median, not mean — scam listings and delusional asks make the tails garbage.
-7. Also stored per run: n, IQR, min/max retained, count of outliers dropped.
+2. Fetch result pages (HTTP GET, robots.txt-respecting, §9). For collection pages, extract **each visible listing row** and its detail URL. Fetch a detail URL only when it is robots-permitted and required to ground a row-level attribute such as production year or warranty.
+3. LLM extracts every individual listing: price, currency, condition, year, papers, box, warranty, seller name, stable SKU when available, row URL, and detail URL. Each attribute retains the URL and short grounding snippet that supports it.
+4. Grounding check (anti-hallucination): each extracted price must appear verbatim in its own row or detail page (post currency-symbol normalization), verified by regex. Production year and warranty receive the same row/detail-level provenance check. Rows failing their price grounding are dropped and logged; unsupported optional attributes are `unknown`.
+5. Dedupe by stable seller listing identity: `seller_domain + SKU` when present, otherwise canonical detail URL, otherwise a hash of the normalized row title and source URL. Listings seen in prior runs are re-observed, not duplicated.
+6. Scope-classify (§4), split by condition into grey vs. resell populations.
+7. Aggregate: **weighted median** (weights: 1.0 in-scope, 0.5 uncertain) after IQR outlier removal (drop outside Q1−1.5·IQR / Q3+1.5·IQR). Median, not mean — scam listings and delusional asks make the tails garbage.
+8. Also stored per run: n, IQR, min/max retained, count of outliers dropped.
 - **Confidence targets:** n target = 8 listings, diversity target = 4 domains, agreement = 1 − (IQR/median, capped at 1).
 - **Displayed as:** dashboard labels are explicitly **"Avg asking (grey)"** and **"Avg asking (resell)"** — e.g., "Avg asking (grey): $34,800 · n=14 · High confidence · 6h ago" with drawer. *(Decision, v2: asking prices accepted as the basis; the label carries the honesty.)*
 - **Refresh tier:** daily.
@@ -441,9 +446,11 @@ Problem: 52-wk MAs need a year of history that doesn't exist on day one.
 
 **Phase 0 — Skeleton (builder-days ~1–3, shorter in v3):** repo with `render.yaml` blueprint, Next.js + Postgres wiring, pipeline CLI entrypoint (`npm run pipeline`) that logs and exits, env-var password auth (~20 lines), watch CRUD with spec-lookup-and-confirm flow (Flow A minus pipeline), seed JSON files (curated sellers, jurisdictions) loaded by migration. *Exit: deployed on Render via git push; can add a watch and see a card with specs/photo/retail from the spec-lookup pass.*
 
-**Phase 1A — listing foundation (implemented):** one Basic Tavily search per active watch per daily run, constrained with Tavily's curated-domain filter; retrieve only returned pages on curated domains after a `robots.txt` check; accept only structured Product/Offer prices; persist listing observations and daily snapshots; display a scope-matched USD asking-price range, median, source link, and captured date. Unknown required scope attributes are excluded rather than inferred, except that an unstated warranty is permissible unless factory warranty is explicitly required. This intentionally does **not** use an LLM, currency conversion, backfill, or a manual refresh; it is the credit-safe validation release described in §0.1.
+**Phase 1A — listing foundation (implemented):** one Basic Tavily search per active watch per daily run, constrained with Tavily's curated-domain filter; retrieve only returned pages on curated domains after a `robots.txt` check; accept only structured Product/Offer prices; persist listing observations and daily snapshots; display a scope-matched USD asking-price range, median, source link, and captured date. It does not yet reliably extract individual collection-page rows or detail-page attributes, so production-year bounds must remain unset and warranty must remain `none_ok`. This intentionally does **not** use an LLM, currency conversion, or backfill; a manual refresh uses the same capped, one-query policy. It is the credit-safe validation release described in §0.1.
 
-**Phase 1B — MVP pricing quality (~1–2 weeks after Phase 1A evidence):** expand `price_scan` to the §5.2.3 template set only after setting a paid credit cap; add grounded extraction/classification, grey + resell medians, confidence/staleness/provenance UI, availability index, curated-seller where-to-buy, historical backfill + partial-window MAs, and manual refresh. *Exit: the dashboard answers "what's this watch worth today and where can I safely buy it" with honest confidence labels.*
+**Phase 1B — MVP pricing quality (~1–2 weeks after Phase 1A evidence):** expand `price_scan` to the §5.2.3 template set only after setting a paid credit cap; enable it only with the explicit Phase 1B capability flag plus `TAVILY_MONTHLY_CREDIT_CAP` and `ANTHROPIC_API_KEY`; implement listing-row extraction and robots-permitted detail-page enrichment before enforcing production-year or warranty scope; add grounded extraction/classification, grey + resell medians, confidence/staleness/provenance UI, availability index, curated-seller where-to-buy, live-history partial-window MAs, and apply the same safeguards to the capped manual refresh. *Exit: the dashboard answers "what's this watch worth today and where can I safely buy it" with honest confidence labels.*
+
+**Release-cycle deferral (2026-07-12):** third-party historical-price backfill is deferred one release cycle while Steve evaluates WatchCharts licensing and alternative sources. Phase 1B ships live-history partial moving averages only; it must not scrape or persist third-party historical data until a source and retention terms are approved.
 
 **Phase 2 — Judgment layer (~1 week):** `chatter_scan` (waitlist estimate + sentiment with rubric/EWMA), `news_scan`, LLM long-tail seller research, evidence drawers everywhere, sort/filter, scope-change annotations. *Exit: every §5.2 field live.*
 

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Pool } from "pg";
 import type { Watch } from "@/lib/watches";
-import { ACTIVE_LISTING_WINDOW_DAYS, UNCERTAIN_LISTING_WEIGHT, confidenceFor } from "@/lib/phase1b";
+import { ACTIVE_LISTING_WINDOW_DAYS, UNCERTAIN_LISTING_WEIGHT, confidenceFor, isPhase1bEnabled, phase1bConfigurationError } from "@/lib/phase1b";
 
 type Seller = { id: string; name: string; domain: string };
 type DiscoveryResult = { url: string; title: string };
@@ -19,11 +19,16 @@ const lastRequestByDomain = new Map<string, number>();
 const requestIntervalMs = 5_000;
 
 export async function researchWatch(pool: Pool, watch: Watch, runId: string) {
+  const configurationError = phase1bConfigurationError();
+  if (configurationError) throw new Error(configurationError);
+  const phase1b = isPhase1bEnabled();
+  // Preserve legacy scope in storage, but do not enforce attributes that Phase
+  // 1A cannot ground at listing level.
+  const effectiveWatch = phase1b ? watch : { ...watch, scope: { ...watch.scope, yearMin: null, yearMax: null, warranty: "none_ok" as const } };
   const sellers = (await pool.query<Seller>("SELECT id, name, domain FROM sellers WHERE curated = true ORDER BY trust_score DESC")).rows;
-  const expanded = Boolean(process.env.TAVILY_MONTHLY_CREDIT_CAP && process.env.ANTHROPIC_API_KEY);
-  const discovered = await discoverListings(pool, watch, sellers, expanded);
-  const allowedResults = discovered.filter((result) => sellerForUrl(result.url, sellers)).slice(0, expanded ? 32 : 10);
-  const fxRates = await getUsdRates();
+  const discovered = await discoverListings(pool, watch, sellers, phase1b);
+  const allowedResults = discovered.filter((result) => sellerForUrl(result.url, sellers)).slice(0, phase1b ? 32 : 10);
+  const fxRates = phase1b ? await getUsdRates() : { USD: 1 };
   let pagesRead = 0, savedListings = 0, scopeMatchedListings = 0, groundingDrops = 0;
   const scopeExclusions = new Map<string, number>();
 
@@ -34,19 +39,19 @@ export async function researchWatch(pool: Pool, watch: Watch, runId: string) {
       const html = await fetchAllowedPage(result.url, sellers);
       if (!html) continue;
       pagesRead += 1;
-      let candidates = extractListingRows(html, result.url, result.title);
+      let candidates = extractListingRows(html, result.url, result.title, { allowLoosePage: phase1b, extractScopeAttributes: phase1b });
       // Haiku adds row-level classification hints, but every retained value still
       // has to be grounded in the row/detail text below.
-      candidates = await enrichRowsWithClaude(candidates, html);
+      if (phase1b) candidates = await enrichRowsWithClaude(candidates, html);
       for (const candidate of candidates) {
-        const detail = candidate.detailUrl && canonicalUrl(candidate.detailUrl) !== canonicalUrl(result.url)
+        const detail = phase1b && needsDetailEnrichment(candidate, watch) && candidate.detailUrl && canonicalUrl(candidate.detailUrl) !== canonicalUrl(result.url)
           ? await fetchDetail(candidate.detailUrl, sellers)
           : null;
         const enriched = detail ? mergeDetail(candidate, detail.html, detail.url) : candidate;
         if (!isPriceGrounded(enriched)) { groundingDrops += 1; continue; }
         const priceUsd = normalizeToUsd(enriched.priceOriginal, enriched.currency, fxRates);
         if (!priceUsd || priceUsd.value < 1_000 || priceUsd.value > 1_000_000) { groundingDrops += 1; continue; }
-        const scope = classifyScope(enriched, watch);
+        const scope = classifyScope(enriched, effectiveWatch);
         const stored: StoredListing = { ...enriched, priceUsd: priceUsd.value, fxRate: priceUsd.rate, scope };
         await saveListing(pool, runId, watch.id, seller.id, stored);
         savedListings += 1;
@@ -60,8 +65,8 @@ export async function researchWatch(pool: Pool, watch: Watch, runId: string) {
 
   const metrics = await createMetrics(pool, watch.id, runId);
   return {
-    discoveryQueries: expanded ? priceQueryTemplates(watch, sellers).length : 1,
-    expanded, pagesRead, savedListings, scopeMatchedListings, scopeExcludedListings: savedListings - scopeMatchedListings,
+    discoveryQueries: phase1b ? priceQueryTemplates(watch, sellers).length : 1,
+    expanded: phase1b, pagesRead, savedListings, scopeMatchedListings, scopeExcludedListings: savedListings - scopeMatchedListings,
     scopeExclusions: [...scopeExclusions.entries()].map(([reason, count]) => ({ reason, count })), discovered: discovered.length,
     groundingDrops, metrics,
   };
@@ -89,6 +94,14 @@ async function discoverListings(pool: Pool, watch: Watch, sellers: Seller[], exp
     }
   }
   return [...unique.values()];
+}
+
+function needsDetailEnrichment(row: ListingCandidate, watch: Watch) {
+  return (watch.scope.condition !== "any" && row.condition === null)
+    || (watch.scope.papers === "required" && row.hasPapers === null)
+    || (watch.scope.box === "required" && row.hasBox === null)
+    || (watch.scope.warranty !== "none_ok" && row.warranty === null)
+    || ((watch.scope.yearMin !== null || watch.scope.yearMax !== null) && row.productionYear === null);
 }
 
 function priceQueryTemplates(watch: Watch, sellers: Seller[]) {
@@ -176,14 +189,17 @@ function parseRobots(robots: string) {
 }
 function matchesRobotsPath(pattern: string, path: string) { return new RegExp(`^${pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\$$/, "$")}`).test(path); }
 
-function extractListingRows(html: string, pageUrl: string, fallbackTitle: string): ListingCandidate[] {
+export function extractListingRows(html: string, pageUrl: string, fallbackTitle: string, options: { allowLoosePage?: boolean; extractScopeAttributes?: boolean } = {}): ListingCandidate[] {
+  const { allowLoosePage = true, extractScopeAttributes = true } = options;
   const products: Array<Record<string, unknown>> = [];
   for (const match of html.matchAll(/<script[^>]+type=["']application\/ld\+json[^"']*["'][^>]*>([\s\S]*?)<\/script>/gi)) {
     try { collectProducts(JSON.parse(match[1]), products); } catch { /* Ignore malformed publisher JSON. */ }
   }
-  const rows = products.map((product) => candidateFromProduct(product, pageUrl)).filter((row): row is ListingCandidate => Boolean(row));
+  const rows = products.map((product) => candidateFromProduct(product, pageUrl, extractScopeAttributes)).filter((row): row is ListingCandidate => Boolean(row));
   if (rows.length) return dedupeRows(rows);
-  return candidateFromLoosePage(html, pageUrl, fallbackTitle) ? [candidateFromLoosePage(html, pageUrl, fallbackTitle)!] : [];
+  if (!allowLoosePage) return [];
+  const loose = candidateFromLoosePage(html, pageUrl, fallbackTitle, extractScopeAttributes);
+  return loose ? [loose] : [];
 }
 function collectProducts(value: unknown, results: Array<Record<string, unknown>>) {
   if (Array.isArray(value)) { value.forEach((item) => collectProducts(item, results)); return; }
@@ -192,23 +208,23 @@ function collectProducts(value: unknown, results: Array<Record<string, unknown>>
   if (type === "Product" || (Array.isArray(type) && type.includes("Product"))) results.push(item);
   for (const nested of Object.values(item)) if (nested && typeof nested === "object") collectProducts(nested, results);
 }
-function candidateFromProduct(product: Record<string, unknown>, pageUrl: string): ListingCandidate | null {
+function candidateFromProduct(product: Record<string, unknown>, pageUrl: string, extractScopeAttributes: boolean): ListingCandidate | null {
   const offer = findOffer(product), raw = offer?.price ?? offer?.lowPrice, price = typeof raw === "number" ? raw : parseNumber(raw);
   const currency = stringValue(offer?.priceCurrency ?? offer?.currency)?.toUpperCase();
   if (!offer || !price || !currency) return null;
   const title = stringValue(product.name) ?? "Untitled listing";
   const detailUrl = resolveUrl(stringValue(product.url) ?? stringValue(offer.url), pageUrl);
   const text = JSON.stringify({ name: title, offers: offer, sku: product.sku, description: product.description }).slice(0, 2048);
-  return listingFromText({ title, sourceUrl: pageUrl, detailUrl, stableSku: stringValue(product.sku) ?? stringValue(product.mpn), priceOriginal: price, currency, text });
+  return listingFromText({ title, sourceUrl: pageUrl, detailUrl, stableSku: stringValue(product.sku) ?? stringValue(product.mpn), priceOriginal: price, currency, text }, extractScopeAttributes);
 }
-function candidateFromLoosePage(html: string, pageUrl: string, fallbackTitle: string): ListingCandidate | null {
+function candidateFromLoosePage(html: string, pageUrl: string, fallbackTitle: string, extractScopeAttributes: boolean): ListingCandidate | null {
   const text = htmlToText(html), priceText = text.match(/(?:US\$|USD\s?|\$)\s?([\d,]+(?:\.\d{2})?)/i)?.[1], price = parseNumber(priceText);
   if (!price) return null;
-  return listingFromText({ title: metaContent(html, "og:title") ?? fallbackTitle, sourceUrl: pageUrl, detailUrl: pageUrl, stableSku: null, priceOriginal: price, currency: "USD", text: text.slice(0, 2048) });
+  return listingFromText({ title: metaContent(html, "og:title") ?? fallbackTitle, sourceUrl: pageUrl, detailUrl: pageUrl, stableSku: null, priceOriginal: price, currency: "USD", text: text.slice(0, 2048) }, extractScopeAttributes);
 }
-function listingFromText(input: { title: string; sourceUrl: string; detailUrl: string | null; stableSku: string | null; priceOriginal: number; currency: string; text: string }): ListingCandidate {
+function listingFromText(input: { title: string; sourceUrl: string; detailUrl: string | null; stableSku: string | null; priceOriginal: number; currency: string; text: string }, extractScopeAttributes: boolean): ListingCandidate {
   const text = `${input.title} ${input.text}`.toLowerCase();
-  return { ...input, groundingSnippet: input.text.slice(0, 2048), productionYear: findYear(text), hasPapers: /\b(with )?(papers|certificate|full set)\b/.test(text) ? true : null, hasBox: /\b(with )?box\b|\bfull set\b/.test(text) ? true : null, condition: /\b(unworn|brand new|new)\b/.test(text) ? "unworn" : /\b(pre[- ]?owned|used)\b/.test(text) ? "pre_owned" : null, warranty: /\b(factory|manufacturer(?:'s)?|rolex) warranty\b/.test(text) ? "factory" : /\bwarranty\b/.test(text) ? "third_party" : null };
+  return { ...input, groundingSnippet: input.text.slice(0, 2048), productionYear: extractScopeAttributes ? findYear(text) : null, hasPapers: /\b(with )?(papers|certificate|full set)\b/.test(text) ? true : null, hasBox: /\b(with )?box\b|\bfull set\b/.test(text) ? true : null, condition: /\b(unworn|brand new|new)\b/.test(text) ? "unworn" : /\b(pre[- ]?owned|used)\b/.test(text) ? "pre_owned" : null, warranty: extractScopeAttributes ? (/\b(factory|manufacturer(?:'s)?|rolex) warranty\b/.test(text) ? "factory" : /\bwarranty\b/.test(text) ? "third_party" : null) : null };
 }
 function dedupeRows(rows: ListingCandidate[]) { const unique = new Map<string, ListingCandidate>(); for (const row of rows) unique.set(row.stableSku ?? canonicalUrl(row.detailUrl ?? row.sourceUrl), row); return [...unique.values()]; }
 function findOffer(product: Record<string, unknown>) { const offers = product.offers, offer = Array.isArray(offers) ? offers[0] : offers; return offer && typeof offer === "object" ? offer as Record<string, unknown> : null; }
