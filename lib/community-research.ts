@@ -240,7 +240,7 @@ async function reserveSearchCredit(pool: Pool, credits: number) {
   const cap = Number(process.env.TAVILY_MONTHLY_CREDIT_CAP);
   if (!Number.isInteger(cap) || cap < 1) throw new Error("TAVILY_MONTHLY_CREDIT_CAP must be a positive integer for Phase 2 research.");
   const key = `tavily_credits:${new Date().toISOString().slice(0, 7)}`;
-  const result = await pool.query("INSERT INTO settings (key, value) VALUES ($1, jsonb_build_object('used', $2)) ON CONFLICT (key) DO UPDATE SET value = jsonb_build_object('used', COALESCE((settings.value->>'used')::integer, 0) + $2), updated_at = now() WHERE COALESCE((settings.value->>'used')::integer, 0) + $2 <= $3 RETURNING value", [key, credits, cap]);
+  const result = await pool.query("INSERT INTO settings (key, value) VALUES ($1, jsonb_build_object('used', $2::integer)) ON CONFLICT (key) DO UPDATE SET value = jsonb_build_object('used', COALESCE((settings.value->>'used')::integer, 0) + $2::integer), updated_at = now() WHERE COALESCE((settings.value->>'used')::integer, 0) + $2::integer <= $3::integer RETURNING value", [key, credits, cap]);
   if (!result.rowCount) throw new Error(`Tavily monthly credit cap (${cap}) has been reached; Phase 2 scans are paused.`);
 }
 
