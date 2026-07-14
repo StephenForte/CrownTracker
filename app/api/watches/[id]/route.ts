@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { hasSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { ownerEmail } from "@/lib/owner";
 import { hasValidYearRange, scopeSchema } from "@/lib/watch-schema";
+
+const nicknameSchema = z.object({ nickname: z.string().trim().min(2).max(80) });
 
 export async function PATCH(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   if (!(await hasSession())) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -13,6 +16,15 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
   let scopeChanged = false;
   if (typeof body.status === "string" && ["active", "archived"].includes(body.status)) {
     result = await db.query(`UPDATE watches SET status = $1, updated_at = now() WHERE ${ownership} RETURNING id`, [body.status, id, ownerEmail]);
+  } else if ("nickname" in body) {
+    const nickname = nicknameSchema.safeParse(body);
+    if (!nickname.success) return NextResponse.json({ error: "Nickname must be 2–80 non-space characters." }, { status: 400 });
+    try {
+      result = await db.query(`UPDATE watches SET nickname = $1, updated_at = now() WHERE ${ownership} RETURNING id`, [nickname.data.nickname, id, ownerEmail]);
+    } catch (error: unknown) {
+      if ((error as { code?: string }).code === "23505") return NextResponse.json({ error: "This reference already uses that nickname." }, { status: 409 });
+      throw error;
+    }
   } else {
     const scope = scopeSchema.safeParse(body.scope);
     if (!scope.success || !hasValidYearRange(scope.data)) return NextResponse.json({ error: "Invalid market scope." }, { status: 400 });
