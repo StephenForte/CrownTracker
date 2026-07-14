@@ -120,9 +120,9 @@ async function reserveSearchCredit(pool: Pool, credits: number) {
   if (!Number.isInteger(cap) || cap < 1) throw new Error("TAVILY_MONTHLY_CREDIT_CAP must be a positive integer.");
   const key = `tavily_credits:${new Date().toISOString().slice(0, 7)}`;
   const result = await pool.query(
-    `INSERT INTO settings (key, value) VALUES ($1, jsonb_build_object('used', $2))
-     ON CONFLICT (key) DO UPDATE SET value = jsonb_build_object('used', COALESCE((settings.value->>'used')::integer, 0) + $2), updated_at = now()
-       WHERE COALESCE((settings.value->>'used')::integer, 0) + $2 <= $3
+    `INSERT INTO settings (key, value) VALUES ($1, jsonb_build_object('used', $2::integer))
+     ON CONFLICT (key) DO UPDATE SET value = jsonb_build_object('used', COALESCE((settings.value->>'used')::integer, 0) + $2::integer), updated_at = now()
+       WHERE COALESCE((settings.value->>'used')::integer, 0) + $2::integer <= $3::integer
      RETURNING value`, [key, credits, cap],
   );
   if (!result.rowCount) throw new Error(`Tavily monthly credit cap (${cap}) has been reached; expanded scans are paused.`);
