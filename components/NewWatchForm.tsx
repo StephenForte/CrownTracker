@@ -17,7 +17,7 @@ const blank: FormValues = {
   specs: {},
 };
 
-export function NewWatchForm() {
+export function NewWatchForm({ phase1bEnabled }: { phase1bEnabled: boolean }) {
   const router = useRouter();
   const [draft, setDraft] = useState<WatchDraft | null>(null);
   const [form, setForm] = useState<FormValues>(blank);
@@ -60,11 +60,11 @@ export function NewWatchForm() {
       specs: { ...form.specs, caseSizeMm: form.specs.caseSizeMm ? Number(form.specs.caseSizeMm) : null },
       scope: {
         condition: String(fields.get("condition")),
-        yearMin: numberOrNull("yearMin"),
-        yearMax: numberOrNull("yearMax"),
+        yearMin: phase1bEnabled ? numberOrNull("yearMin") : null,
+        yearMax: phase1bEnabled ? numberOrNull("yearMax") : null,
         papers: String(fields.get("papers")),
         box: String(fields.get("box")),
-        warranty: String(fields.get("warranty")),
+        warranty: phase1bEnabled ? String(fields.get("warranty")) : "none_ok",
       },
       notes: String(fields.get("notes") ?? ""),
     };
@@ -121,10 +121,10 @@ export function NewWatchForm() {
         <div className="form-grid">
           <div className="field"><label htmlFor="condition">Condition</label><select id="condition" name="condition" defaultValue="any"><option value="any">Any condition</option><option value="unworn">Unworn only</option><option value="pre_owned">Pre-owned only</option></select></div>
           <div className="field"><label htmlFor="papers">Papers</label><select id="papers" name="papers" defaultValue="required"><option value="required">Required</option><option value="not_required">Not required</option></select></div>
-          <div className="field"><label htmlFor="yearMin">Production year, from</label><input id="yearMin" name="yearMin" type="number" min="1900" max="2100" /></div>
-          <div className="field"><label htmlFor="yearMax">Production year, to</label><input id="yearMax" name="yearMax" type="number" min="1900" max="2100" /></div>
+          {phase1bEnabled && <><div className="field"><label htmlFor="yearMin">Production year, from</label><input id="yearMin" name="yearMin" type="number" min="1900" max="2100" /></div>
+          <div className="field"><label htmlFor="yearMax">Production year, to</label><input id="yearMax" name="yearMax" type="number" min="1900" max="2100" /></div></>}
           <div className="field"><label htmlFor="box">Box</label><select id="box" name="box" defaultValue="not_required"><option value="not_required">Not required</option><option value="required">Required</option></select></div>
-          <div className="field"><label htmlFor="warranty">Warranty</label><select id="warranty" name="warranty" defaultValue="none_ok"><option value="factory_remaining">Factory warranty required</option><option value="third_party_ok">Factory or third-party accepted</option><option value="none_ok">No warranty requirement</option></select></div>
+          {phase1bEnabled && <div className="field"><label htmlFor="warranty">Warranty</label><select id="warranty" name="warranty" defaultValue="none_ok"><option value="factory_remaining">Factory warranty required</option><option value="third_party_ok">Factory or third-party accepted</option><option value="none_ok">No warranty requirement</option></select></div>}
           <div className="field wide"><label htmlFor="notes">Notes</label><textarea id="notes" name="notes" placeholder="Personal notes, dial details, or purchase context" /></div>
         </div>
       </section>

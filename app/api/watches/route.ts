@@ -5,6 +5,7 @@ import { normalizeReference } from "@/lib/catalog";
 import { db } from "@/lib/db";
 import { getOwnerId } from "@/lib/owner";
 import { hasValidYearRange, scopeSchema } from "@/lib/watch-schema";
+import { isPhase1bEnabled, phase1aScopeError } from "@/lib/phase1b";
 
 const watchInput = z.object({
   referenceNumber: z.string().trim().min(3).max(30), modelName: z.string().trim().min(2).max(120), nickname: z.string().trim().min(2).max(80),
@@ -20,6 +21,8 @@ export async function POST(request: NextRequest) {
   if (!parsed.success) return NextResponse.json({ error: "Invalid watch details.", details: parsed.error.flatten() }, { status: 400 });
   const watch = parsed.data;
   if (!hasValidYearRange(watch.scope)) return NextResponse.json({ error: "The start year cannot be after the end year." }, { status: 400 });
+  const phase1aError = !isPhase1bEnabled() ? phase1aScopeError(watch.scope) : null;
+  if (phase1aError) return NextResponse.json({ error: phase1aError }, { status: 400 });
   try {
     const result = await db.query<{ id: string }>(
       `INSERT INTO watches (user_id, reference_number, model_name, nickname, specs, scope, photo_source_url, retail_price_usd, discontinued, notes)
