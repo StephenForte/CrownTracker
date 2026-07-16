@@ -105,9 +105,16 @@ textarea { min-height: 100px; resize: vertical; }
 .listing-table span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 520px; }
 .history-list { display: grid; gap: 0; margin-top: 14px; }
 .history-list div { display: grid; grid-template-columns: 130px 1fr auto; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.archived-list { display: grid; gap: 0; padding-top: 8px; padding-bottom: 8px; }
+.archived-row { align-items: center; border-bottom: 1px solid var(--line); display: flex; gap: 16px; justify-content: space-between; padding: 16px 0; }
+.archived-row:last-child { border-bottom: 0; }
+.archived-row-link { flex: 1; min-width: 0; text-decoration: none; }
+.archived-row-link .eyebrow { margin-bottom: 4px; }
+.archived-row-link .watch-ref { font-size: 22px; }
+.archived-row-link .card-model { margin: 4px 0 0; }
 .news-list { display: grid; gap: 0; margin-top: 14px; }
 .news-list article { padding: 12px 0; border-bottom: 1px solid var(--line); }
 .news-list p { margin: 6px 0; color: var(--muted); }
 .news-list small { color: var(--muted); }
-@media (max-width: 640px) { .market-stats, .metric-pair { grid-template-columns: 1fr; } .listing-table a { display: grid; } .listing-table a > div:last-child { text-align: left; } .history-list div { grid-template-columns: 1fr; gap: 4px; } .identity-panel { align-items: stretch; display: grid; } }
+@media (max-width: 640px) { .market-stats, .metric-pair { grid-template-columns: 1fr; } .listing-table a { display: grid; } .listing-table a > div:last-child { text-align: left; } .history-list div { grid-template-columns: 1fr; gap: 4px; } .identity-panel { align-items: stretch; display: grid; } .archived-row { align-items: stretch; display: grid; } }
 @media (max-width: 640px) { .shell { padding: 0 16px 32px; } .hero, .detail-header { display: block; } .hero .button { display: inline-block; margin-top: 20px; } .form-grid { grid-template-columns: 1fr; } .lookup, .dashboard-controls { display: grid; } .kv { grid-template-columns: 1fr; gap: 4px; } }
