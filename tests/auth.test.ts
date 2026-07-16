@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import test from "node:test";
 import { createSessionValue, isValidSession } from "@/lib/auth";
 
@@ -85,11 +86,11 @@ test("isValidSession returns false for expired session", () => {
   process.env.SESSION_SECRET = testSecret;
 
   try {
-    const session = createSessionValue();
-    const [payload, signature] = session.split(".");
-    const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
-
-    const expiredPayload = Buffer.from(JSON.stringify({ ...decoded, expiresAt: Date.now() - 1000 })).toString("base64url");
+    // Sign a genuinely expired payload so failure is due to expiry, not HMAC mismatch
+    const expiredPayload = Buffer.from(
+      JSON.stringify({ role: "owner", expiresAt: Date.now() - 1000 }),
+    ).toString("base64url");
+    const signature = createHmac("sha256", testSecret).update(expiredPayload).digest("base64url");
 
     assert.equal(isValidSession(`${expiredPayload}.${signature}`), false);
   } finally {
