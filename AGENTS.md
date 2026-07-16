@@ -33,3 +33,13 @@
 - Run `npm run typecheck` and `npm run build` for app changes. Run `npm run db:migrate` against a disposable/local database when a migration changes.
 - Update `.env.example`, `render.yaml`, and `README.md` whenever required configuration or operations change.
 - In review notes, call out any unverified external-source behavior, paid-provider prerequisite, or policy/ToS coverage gap rather than guessing.
+
+## Cursor Cloud specific instructions
+
+Standard scripts live in `package.json` (`dev`, `build`, `typecheck`, `test`, `db:migrate`, `pipeline`) and the setup flow is in `README.md`. `npm install` runs automatically on startup; the notes below are the non-obvious cloud caveats.
+
+- Postgres is installed but NOT auto-started. Start it each session with `sudo pg_ctlcluster 16 main start` (check with `pg_isready`). The `ubuntu` superuser role (password `ubuntu`) and the `crown_tracker` database persist in the VM snapshot; if they are missing, recreate with `sudo -u postgres psql -c "CREATE ROLE ubuntu LOGIN SUPERUSER PASSWORD 'ubuntu';"` and `createdb -h localhost -U ubuntu crown_tracker`.
+- The app connects over TCP (`postgresql://ubuntu:ubuntu@localhost:5432/crown_tracker`), so the role needs a password — a passwordless local/peer setup fails with a SCRAM error.
+- `.env.local` is gitignored and must exist before running anything. It needs `APP_PASSWORD`, a `SESSION_SECRET` of at least 32 characters, and `DATABASE_URL`. The local dev password is `crownlocal123`. Leave `PHASE1B_ENRICHMENT_ENABLED=false` and the Tavily/Anthropic keys blank unless intentionally testing paid research runs.
+- Do not rely on `npm run lint`: the repo has no ESLint config, so `next lint` drops into an interactive setup prompt and hangs. Linting and type-checking are exercised by `npm run build` (and `npm run typecheck`) instead.
+- The `/api/auth/login` route consumes form-encoded data (the HTML login form), not JSON — POST it with `application/x-www-form-urlencoded` when scripting.
