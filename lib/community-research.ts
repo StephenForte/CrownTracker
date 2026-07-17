@@ -230,10 +230,18 @@ async function rateLimit(host: string) {
 }
 
 async function callClaude<T>(prompt: string, maxTokens: number): Promise<T> {
-  const response = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "x-api-key": process.env.ANTHROPIC_API_KEY!, "anthropic-version": "2023-06-01", "content-type": "application/json" }, body: JSON.stringify({ model: process.env.ANTHROPIC_HAIKU_MODEL ?? "claude-haiku-4-5-20251001", max_tokens: maxTokens, temperature: 0, messages: [{ role: "user", content: prompt }] }), signal: AbortSignal.timeout(45_000) });
+  // Assistant prefilling is Anthropic's supported way to force a non-thinking
+  // response to begin as JSON. All current Phase 2 prompts return objects.
+  const response = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "x-api-key": process.env.ANTHROPIC_API_KEY!, "anthropic-version": "2023-06-01", "content-type": "application/json" }, body: JSON.stringify({ model: process.env.ANTHROPIC_HAIKU_MODEL ?? "claude-haiku-4-5-20251001", max_tokens: maxTokens, temperature: 0, messages: [{ role: "user", content: prompt }, { role: "assistant", content: "{" }] }), signal: AbortSignal.timeout(45_000) });
   if (!response.ok) throw new Error(`Anthropic extraction failed with HTTP ${response.status}.`);
-  const body = await response.json() as { content?: Array<{ text?: string }> }, text = body.content?.map((item) => item.text ?? "").join("") ?? "";
-  return parseClaudeJson<T>(text);
+  const body = await response.json() as { content?: Array<{ type?: string; text?: string }>; stop_reason?: string };
+  const text = `{${body.content?.filter((item) => item.type === "text" || item.text).map((item) => item.text ?? "").join("") ?? ""}`;
+  try { return parseClaudeJson<T>(text); }
+  catch {
+    // Do not log model text: it can contain source excerpts. These fields make
+    // a provider/model issue diagnosable without exposing retained research.
+    throw new Error(`Anthropic returned no JSON object (stop_reason=${body.stop_reason ?? "unknown"}, text_chars=${Math.max(0, text.length - 1)}).`);
+  }
 }
 
 /** Claude is instructed to return JSON, but an otherwise useful response can
