@@ -233,7 +233,45 @@ async function callClaude<T>(prompt: string, maxTokens: number): Promise<T> {
   const response = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "x-api-key": process.env.ANTHROPIC_API_KEY!, "anthropic-version": "2023-06-01", "content-type": "application/json" }, body: JSON.stringify({ model: process.env.ANTHROPIC_HAIKU_MODEL ?? "claude-haiku-4-5-20251001", max_tokens: maxTokens, temperature: 0, messages: [{ role: "user", content: prompt }] }), signal: AbortSignal.timeout(45_000) });
   if (!response.ok) throw new Error(`Anthropic extraction failed with HTTP ${response.status}.`);
   const body = await response.json() as { content?: Array<{ text?: string }> }, text = body.content?.map((item) => item.text ?? "").join("") ?? "";
-  return JSON.parse(text.replace(/^```(?:json)?\s*|\s*```$/g, "")) as T;
+  return parseClaudeJson<T>(text);
+}
+
+/** Claude is instructed to return JSON, but an otherwise useful response can
+ * contain a markdown fence or a short trailing explanation. Keep the first
+ * complete JSON value and reject malformed content rather than failing on the
+ * harmless suffix. */
+export function parseClaudeJson<T>(text: string): T {
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
+  if (fenced) return JSON.parse(fenced.trim()) as T;
+  for (let start = 0; start < text.length; start += 1) {
+    if (text[start] !== "{" && text[start] !== "[") continue;
+    const end = endOfJsonValue(text, start);
+    if (end === null) continue;
+    try { return JSON.parse(text.slice(start, end + 1)) as T; } catch { /* Try the next possible JSON value. */ }
+  }
+  throw new Error("Anthropic response did not contain a complete JSON object or array.");
+}
+
+function endOfJsonValue(text: string, start: number) {
+  const stack: string[] = [];
+  let inString = false, escaped = false;
+  for (let index = start; index < text.length; index += 1) {
+    const character = text[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === '"') inString = false;
+      continue;
+    }
+    if (character === '"') { inString = true; continue; }
+    if (character === "{" || character === "[") stack.push(character);
+    else if (character === "}" || character === "]") {
+      const opener = stack.pop();
+      if ((character === "}" && opener !== "{") || (character === "]" && opener !== "[")) return null;
+      if (!stack.length) return index;
+    }
+  }
+  return null;
 }
 
 async function reserveSearchCredit(pool: Pool, credits: number) {
