@@ -5,6 +5,8 @@ import { getWatches } from "@/lib/watches";
 import { AppShell } from "@/components/AppShell";
 import { getLatestMetrics, getSevenDayMovers } from "@/lib/market";
 import { freshness } from "@/lib/phase1b";
+import { getBudgetStatus } from "@/lib/alerts";
+import { db } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 const money = (value: string | null | undefined) => value ? `$${Number(value).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "Gathering";
@@ -12,14 +14,14 @@ const money = (value: string | null | undefined) => value ? `$${Number(value).to
 export default async function Dashboard({ searchParams }: { searchParams: Promise<{ sort?: string; availability?: string }> }) {
   if (!(await hasSession())) redirect("/login");
   const filters = await searchParams;
-  const watches = await getWatches("active"), ids = watches.map((watch) => watch.id), [metrics, movers] = await Promise.all([getLatestMetrics(ids), getSevenDayMovers(ids)]);
+  const watches = await getWatches("active"), ids = watches.map((watch) => watch.id), [metrics, movers, budget] = await Promise.all([getLatestMetrics(ids), getSevenDayMovers(ids), getBudgetStatus(db)]);
   const filtered = watches.filter((watch) => !filters.availability || filters.availability === "all" || metrics.get(watch.id)?.get("availability")?.label?.toLowerCase() === filters.availability);
   const sorted = [...filtered].sort((left, right) => {
     if (filters.sort === "mover") return Math.abs(movers.get(right.id) ?? 0) - Math.abs(movers.get(left.id) ?? 0);
     if (filters.sort === "availability") return (metrics.get(right.id)?.get("availability")?.value ? Number(metrics.get(right.id)?.get("availability")?.value) : -1) - (metrics.get(left.id)?.get("availability")?.value ? Number(metrics.get(left.id)?.get("availability")?.value) : -1);
     return right.created_at.getTime() - left.created_at.getTime();
   });
-  return <AppShell><section className="hero"><div><div className="eyebrow">Collection dashboard</div><h1>Know the market before you make a move.</h1><p className="muted">Asking-price estimates are scope-matched, source-linked, and visibly graded for confidence and freshness.</p></div><Link className="button" href="/watches/new">Add a watch</Link></section>{watches.length ? <><form className="dashboard-controls" action="/"><label>Sort <select name="sort" defaultValue={filters.sort ?? "newest"}><option value="newest">Recently added</option><option value="mover">Biggest 7-day mover</option><option value="availability">Availability</option></select></label><label>Availability <select name="availability" defaultValue={filters.availability ?? "all"}><option value="all">All</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select></label><button type="submit" className="secondary">Apply</button></form><section className="card-grid">{sorted.map((watch) => {
+  return <AppShell><section className="hero"><div><div className="eyebrow">Collection dashboard</div><h1>Know the market before you make a move.</h1><p className="muted">Asking-price estimates are scope-matched, source-linked, and visibly graded for confidence and freshness.</p></div><Link className="button" href="/watches/new">Add a watch</Link></section>{budget.state === "warning" || budget.state === "paused" ? <p className={`budget-banner ${budget.state}`}>Tavily usage: {budget.used} of {budget.cap} credits ({Math.round((budget.percentage ?? 0) * 100)}%). {budget.state === "paused" ? "Capped searches are paused until the next monthly budget window." : "Review usage before the cap is reached."}</p> : null}{watches.length ? <><form className="dashboard-controls" action="/"><label>Sort <select name="sort" defaultValue={filters.sort ?? "newest"}><option value="newest">Recently added</option><option value="mover">Biggest 7-day mover</option><option value="availability">Availability</option></select></label><label>Availability <select name="availability" defaultValue={filters.availability ?? "all"}><option value="all">All</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select></label><button type="submit" className="secondary">Apply</button></form><section className="card-grid">{sorted.map((watch) => {
     const values = metrics.get(watch.id), grey = values?.get("grey_avg"), resell = values?.get("resell_avg"), availability = values?.get("availability");
     const age = freshness(grey?.computed_at ?? resell?.computed_at);
     const sentiment = values?.get("sentiment"), waitlist = values?.get("waitlist"), mover = movers.get(watch.id);

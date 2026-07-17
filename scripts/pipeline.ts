@@ -8,8 +8,8 @@ const tier = process.argv.find((argument) => argument.startsWith("--tier="))?.sp
 async function main() {
   console.log(JSON.stringify({ event: "pipeline_started", tier, at: new Date().toISOString() }));
   if (!["daily", "chatter", "monthly"].includes(tier)) throw new Error(`Unknown pipeline tier: ${tier}`);
-  const [{ db }, { getWatches }, { researchWatch }, { researchChatterWatch, researchNewsWatch, researchUncuratedSellers }, { checkLatestEvidenceLinks }] = await Promise.all([
-    import("../lib/db"), import("../lib/watches"), import("../lib/research"), import("../lib/community-research"), import("../lib/link-health"),
+  const [{ db }, { getWatches }, { researchWatch }, { researchChatterWatch, researchNewsWatch, researchUncuratedSellers }, { checkLatestEvidenceLinks }, { evaluateEmailAlerts }] = await Promise.all([
+    import("../lib/db"), import("../lib/watches"), import("../lib/research"), import("../lib/community-research"), import("../lib/link-health"), import("../lib/alerts"),
   ]);
   const watches = await getWatches("active");
   let failures = 0;
@@ -55,6 +55,18 @@ async function main() {
       await db.query("UPDATE runs SET status = 'failed', finished_at = now(), error = $1::jsonb WHERE id = $2", [JSON.stringify({ message }), linkCheck.rows[0].id]);
       console.error(JSON.stringify({ event: "link_check_failed", error: message }));
     }
+  }
+  // Notifications are deliberately evaluated after each cron tier so the
+  // state transition is based on committed snapshots/runs, never on a partial
+  // in-memory result. Delivery failures are recorded independently and do not
+  // erase or block the research work that just completed.
+  try {
+    const outcome = await evaluateEmailAlerts(db);
+    console.log(JSON.stringify({ event: "alert_evaluation_finished", ...outcome }));
+  } catch (error) {
+    failures += 1;
+    const message = error instanceof Error ? error.message : "Unknown alert evaluation error";
+    console.error(JSON.stringify({ event: "alert_evaluation_failed", error: message }));
   }
   if (failures) throw new Error(`${failures} watch research run(s) failed.`);
   console.log(JSON.stringify({ event: "pipeline_finished", tier, status: "succeeded", at: new Date().toISOString() }));

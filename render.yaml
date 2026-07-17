@@ -28,6 +28,12 @@ services:
         sync: false
       - key: ANTHROPIC_HAIKU_MODEL
         value: claude-haiku-4-5-20251001
+      - key: RESEND_API_KEY
+        sync: false
+      - key: ALERT_FROM_EMAIL
+        sync: false
+      - key: ALERT_TO_EMAIL
+        sync: false
 
   - type: cron
     runtime: node
@@ -51,6 +57,12 @@ services:
         sync: false
       - key: ANTHROPIC_HAIKU_MODEL
         value: claude-haiku-4-5-20251001
+      - key: RESEND_API_KEY
+        sync: false
+      - key: ALERT_FROM_EMAIL
+        sync: false
+      - key: ALERT_TO_EMAIL
+        sync: false
 
   - type: cron
     runtime: node
@@ -74,6 +86,12 @@ services:
         sync: false
       - key: ANTHROPIC_HAIKU_MODEL
         value: claude-haiku-4-5-20251001
+      - key: RESEND_API_KEY
+        sync: false
+      - key: ALERT_FROM_EMAIL
+        sync: false
+      - key: ALERT_TO_EMAIL
+        sync: false
 
   - type: cron
     runtime: node
@@ -97,6 +115,12 @@ services:
         sync: false
       - key: ANTHROPIC_HAIKU_MODEL
         value: claude-haiku-4-5-20251001
+      - key: RESEND_API_KEY
+        sync: false
+      - key: ALERT_FROM_EMAIL
+        sync: false
+      - key: ALERT_TO_EMAIL
+        sync: false
 
 databases:
   - name: crown-tracker-db

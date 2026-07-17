@@ -16,6 +16,7 @@ export type MovingAverage = { value: string | null; weeks: number; hasFullYear: 
 export type CommunityAnecdote = { id: string; source_url: string; domain: string; quote: string; reported_at: Date | null; wait_months: string | null; region: string | null; purchase_context: string | null; retrieved_at: Date };
 export type NewsItem = { id: string; source_url: string; domain: string; title: string; summary: string; quote: string; published_at: Date | null; retrieved_at: Date };
 export type ScopeChange = { id: string; changed_at: Date; old_scope: Record<string, unknown>; new_scope: Record<string, unknown> };
+export type SourceCoverage = { domain: string; curated: boolean; active_listings: number; watches_observed: number; last_seen_at: Date | null; evidence_items: number; last_link_status: Evidence["link_status"]; last_link_checked_at: Date | null };
 
 export async function getLatestMetrics(watchIds: string[]) {
   const metrics = new Map<string, Map<MetricSnapshot["metric"], MetricSnapshot>>();
@@ -78,6 +79,39 @@ export async function getMarketDetails(watchId: string) {
   const evidenceBySnapshot = new Map<string, Evidence[]>();
   for (const item of evidence.rows) evidenceBySnapshot.set(item.attached_id, [...(evidenceBySnapshot.get(item.attached_id) ?? []), item]);
   return { latest, metrics: metrics.rows, listings: listings.rows, movingAverages, evidenceBySnapshot, anecdotes: anecdotes.rows, news: news.rows, scopeChanges: scopeChanges.rows };
+}
+
+/**
+ * A transparent observed-coverage report: it describes what the pipeline has
+ * actually retained, rather than claiming a source was crawled successfully.
+ * Failed page fetches remain visible in runs; this report avoids guessing why
+ * a domain has no observations.
+ */
+export async function getSourceCoverageReport() {
+  const result = await db.query<SourceCoverage>(
+    `WITH listing_coverage AS (
+       SELECT COALESCE(s.domain, lower(split_part(regexp_replace(l.source_url, '^https?://', ''), '/', 1))) AS domain,
+         COALESCE(bool_or(s.curated), false) AS curated, count(*) FILTER (WHERE l.last_seen_at >= now() - interval '30 days')::int AS active_listings,
+         count(DISTINCT l.watch_id) FILTER (WHERE l.last_seen_at >= now() - interval '30 days')::int AS watches_observed,
+         max(l.last_seen_at) AS last_seen_at
+       FROM market_listings l LEFT JOIN sellers s ON s.id = l.seller_id
+       GROUP BY 1
+     ), evidence_coverage AS (
+       SELECT e.domain, count(*) FILTER (WHERE e.retrieved_at >= now() - interval '30 days')::int AS evidence_items,
+         (array_agg(c.status ORDER BY c.checked_at DESC NULLS LAST))[1] AS last_link_status,
+         max(c.checked_at) AS last_link_checked_at
+       FROM evidence e LEFT JOIN LATERAL (
+         SELECT status, checked_at FROM link_checks WHERE url = e.url ORDER BY checked_at DESC LIMIT 1
+       ) c ON true WHERE e.retrieved_at >= now() - interval '30 days' GROUP BY e.domain
+     ), domains AS (
+       SELECT domain FROM listing_coverage UNION SELECT domain FROM evidence_coverage UNION SELECT domain FROM sellers WHERE curated = true
+     ) SELECT d.domain, COALESCE(l.curated, s.curated, false) AS curated, COALESCE(l.active_listings, 0) AS active_listings,
+       COALESCE(l.watches_observed, 0) AS watches_observed, l.last_seen_at, COALESCE(e.evidence_items, 0) AS evidence_items,
+       e.last_link_status, e.last_link_checked_at
+       FROM domains d LEFT JOIN listing_coverage l ON l.domain = d.domain LEFT JOIN evidence_coverage e ON e.domain = d.domain
+       LEFT JOIN sellers s ON s.domain = d.domain ORDER BY l.last_seen_at DESC NULLS LAST, d.domain`,
+  );
+  return result.rows;
 }
 
 const NEWS_WINDOW_DAYS = 30;
