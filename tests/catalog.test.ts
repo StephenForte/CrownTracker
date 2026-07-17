@@ -113,6 +113,14 @@ test("searchCatalog trims query whitespace", () => {
   assert.ok(results.some((w) => w.nickname === "Panda"));
 });
 
+test("searchCatalog finds indexed aliases and ranks exact alias matches first", () => {
+  const sprite = searchCatalog("sprite");
+  assert.equal(sprite[0]?.referenceNumber, "126720VTNR");
+
+  const explorer = searchCatalog("explorer 2");
+  assert.ok(explorer.some((watch) => watch.referenceNumber === "226570"));
+});
+
 test("searchCatalog result shape includes required fields", () => {
   const results = searchCatalog("panda");
   assert.ok(results.length > 0);

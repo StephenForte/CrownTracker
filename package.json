@@ -9,6 +9,8 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",
+    "test:extraction": "tsx --test tests/extraction-golden.test.ts",
+    "verify:prompts": "tsx scripts/verify-extraction-goldens.ts",
     "db:migrate": "tsx scripts/migrate.ts",
     "pipeline": "tsx scripts/pipeline.ts"
   },

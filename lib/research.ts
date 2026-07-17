@@ -229,19 +229,26 @@ function listingFromText(input: { title: string; sourceUrl: string; detailUrl: s
 function dedupeRows(rows: ListingCandidate[]) { const unique = new Map<string, ListingCandidate>(); for (const row of rows) unique.set(row.stableSku ?? canonicalUrl(row.detailUrl ?? row.sourceUrl), row); return [...unique.values()]; }
 function findOffer(product: Record<string, unknown>) { const offers = product.offers, offer = Array.isArray(offers) ? offers[0] : offers; return offer && typeof offer === "object" ? offer as Record<string, unknown> : null; }
 
-async function enrichRowsWithClaude(rows: ListingCandidate[], html: string) {
-  if (!process.env.ANTHROPIC_API_KEY || !rows.length) return rows;
+export async function enrichRowsWithClaude(rows: ListingCandidate[], html: string, throwOnFailure = false) {
+  if (!rows.length) return rows;
+  if (!process.env.ANTHROPIC_API_KEY) {
+    if (throwOnFailure) throw new Error("ANTHROPIC_API_KEY is required for live prompt verification.");
+    return rows;
+  }
   try {
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST", headers: { "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
       body: JSON.stringify({ model: process.env.ANTHROPIC_HAIKU_MODEL ?? "claude-haiku-4-5-20251001", max_tokens: 1500, temperature: 0, messages: [{ role: "user", content: `Extract only supported attributes for these watch listing rows. Return a JSON array with index, condition (unworn|pre_owned|null), productionYear, hasPapers, hasBox, warranty (factory|third_party|null). Never infer.\nRows: ${JSON.stringify(rows.map((row, index) => ({ index, title: row.title, price: row.priceOriginal, currency: row.currency, snippet: row.groundingSnippet.slice(0, 500) })))}\nPage text: ${htmlToText(html).slice(0, 8000)}` }] }), signal: AbortSignal.timeout(30_000),
     });
-    if (!response.ok) return rows;
+    if (!response.ok) throw new Error(`Anthropic listing extraction failed with HTTP ${response.status}.`);
     const payload = await response.json() as { content?: Array<{ text?: string }> };
     const text = payload.content?.map((item) => item.text ?? "").join("") ?? "";
     const extracted = JSON.parse(text.replace(/^```(?:json)?\s*|\s*```$/g, "")) as Array<Partial<ListingCandidate> & { index: number }>;
     return rows.map((row, index) => mergeGroundedAttributes(row, extracted.find((item) => item.index === index)));
-  } catch { return rows; }
+  } catch (error) {
+    if (throwOnFailure) throw error;
+    return rows;
+  }
 }
 function mergeGroundedAttributes(row: ListingCandidate, extra?: Partial<ListingCandidate>) {
   if (!extra) return row;

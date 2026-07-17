@@ -91,6 +91,7 @@ textarea { min-height: 100px; resize: vertical; }
 .provenance summary { cursor: pointer; color: var(--forest); font-weight: 800; }
 .provenance ul { padding-left: 18px; max-height: 170px; overflow: auto; }
 .provenance li { margin: 8px 0; }
+.link-health { display: block; margin-top: 4px; }
 .trust { display: inline-block; border-radius: 99px; padding: 3px 6px; background: #e5f0e7; color: var(--forest); font-size: 10px; white-space: nowrap; }
 .trust.caution { background: #fff3d8; color: #825d13; }
 .trust.high-risk { background: #f9e2e0; color: var(--danger); }

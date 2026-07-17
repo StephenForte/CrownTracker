@@ -88,7 +88,7 @@ export function NewWatchForm({ phase1bEnabled }: { phase1bEnabled: boolean }) {
     <section className="panel">
       <div className="eyebrow">Step 1</div>
       <h2>Find the watch</h2>
-      <p className="muted">Search the starter catalog by reference, model, or nickname, then confirm every returned field before saving.</p>
+      <p className="muted">Search the local reference index by reference, model, or nickname, then confirm every returned field before saving.</p>
       <ReferenceLookup onSelect={useDraft} />
       {draft && <div className="confirmation">
         <h2>{form.modelName || "Reference not in the starter catalog"}</h2>

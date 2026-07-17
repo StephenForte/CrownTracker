@@ -7,22 +7,33 @@ import { WatchStatusButton } from "@/components/WatchStatusButton";
 import { ScopeEditor } from "@/components/ScopeEditor";
 import { RefreshButton } from "@/components/RefreshButton";
 import { NicknameEditor } from "@/components/NicknameEditor";
-import { getMarketDetails, type MetricSnapshot } from "@/lib/market";
+import { getMarketDetails, type Evidence, type MetricSnapshot } from "@/lib/market";
 import { freshness, isPhase1bEnabled, trustBucket } from "@/lib/phase1b";
 
 export const dynamic = "force-dynamic";
 const money = (value: string | null | undefined) => value ? `$${Number(value).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "Not enough market data";
 
-function MetricPanel({ title, snapshot, ma, evidence }: { title: string; snapshot?: MetricSnapshot; ma?: { value: string | null; weeks: number; hasFullYear: boolean; backfillCount: number }; evidence: Array<{ id: string; url: string; domain: string; quote: string; retrieved_at: Date }> }) {
+function LinkHealth({ evidence }: { evidence: Evidence }) {
+  if (!evidence.link_status || evidence.link_status === "reachable") return null;
+  if (evidence.link_status === "blocked_by_robots") return <small className="link-health">Link health was not checked because the source's robots policy blocks it.</small>;
+  if (evidence.link_status === "invalid") return <small className="link-health warning">This source URL could not be checked safely; the preserved quote remains available.</small>;
+  return <small className="link-health warning">Source link was unavailable when last checked{evidence.link_checked_at ? ` on ${evidence.link_checked_at.toLocaleDateString()}` : ""}; the preserved quote remains available.</small>;
+}
+
+function EvidenceItems({ evidence }: { evidence: Evidence[] }) {
+  return <ul>{evidence.map((item) => <li key={item.id}><a href={item.url} target="_blank" rel="noreferrer">{item.domain}</a><span> — {item.quote}</span><LinkHealth evidence={item} /></li>)}</ul>;
+}
+
+function MetricPanel({ title, snapshot, ma, evidence }: { title: string; snapshot?: MetricSnapshot; ma?: { value: string | null; weeks: number; hasFullYear: boolean; backfillCount: number }; evidence: Evidence[] }) {
   const age = freshness(snapshot?.computed_at);
-  return <section className={`panel metric-panel ${age.state}`}><div className="panel-row"><div className="eyebrow">{title}</div>{snapshot && <span className={`freshness ${age.state}`}>{age.label}</span>}</div><h2>{money(snapshot?.value)}</h2>{snapshot ? <><p className="muted">{snapshot.n} in scope{snapshot.n_uncertain ? ` + ${snapshot.n_uncertain} uncertain` : ""} · <b>{snapshot.confidence}</b> confidence</p><p className="metric-subline">{ma?.value ? `${ma.hasFullYear ? "52" : ma.weeks}-wk avg${ma.hasFullYear ? "" : " (partial)"}: ${money(ma.value)}` : "Moving average starts with the first verified observation."}</p><details className="provenance"><summary>Why this number?</summary><p>Median after IQR outlier removal ({snapshot.outliers_dropped} dropped). Confidence: sample {Math.round(snapshot.conf_sample * 100)}%, source diversity {Math.round(snapshot.conf_diversity * 100)}%, agreement {Math.round(snapshot.conf_agreement * 100)}%.</p>{evidence.length ? <ul>{evidence.map((item) => <li key={item.id}><a href={item.url} target="_blank" rel="noreferrer">{item.domain}</a><span> — {item.quote}</span></li>)}</ul> : <p>No retained evidence is available for this run.</p>}</details></> : <p className="muted">Refresh this watch to collect grounded listing rows.</p>}</section>;
+  return <section className={`panel metric-panel ${age.state}`}><div className="panel-row"><div className="eyebrow">{title}</div>{snapshot && <span className={`freshness ${age.state}`}>{age.label}</span>}</div><h2>{money(snapshot?.value)}</h2>{snapshot ? <><p className="muted">{snapshot.n} in scope{snapshot.n_uncertain ? ` + ${snapshot.n_uncertain} uncertain` : ""} · <b>{snapshot.confidence}</b> confidence</p><p className="metric-subline">{ma?.value ? `${ma.hasFullYear ? "52" : ma.weeks}-wk avg${ma.hasFullYear ? "" : " (partial)"}: ${money(ma.value)}` : "Moving average starts with the first verified observation."}</p><details className="provenance"><summary>Why this number?</summary><p>Median after IQR outlier removal ({snapshot.outliers_dropped} dropped). Confidence: sample {Math.round(snapshot.conf_sample * 100)}%, source diversity {Math.round(snapshot.conf_diversity * 100)}%, agreement {Math.round(snapshot.conf_agreement * 100)}%.</p>{evidence.length ? <EvidenceItems evidence={evidence} /> : <p>No retained evidence is available for this run.</p>}</details></> : <p className="muted">Refresh this watch to collect grounded listing rows.</p>}</section>;
 }
 
-function EvidenceList({ evidence }: { evidence: Array<{ id: string; url: string; domain: string; quote: string }> }) {
-  return evidence.length ? <details className="provenance"><summary>View evidence</summary><ul>{evidence.map((item) => <li key={item.id}><a href={item.url} target="_blank" rel="noreferrer">{item.domain}</a><span> — {item.quote}</span></li>)}</ul></details> : <p className="muted">No grounded evidence is available for this run.</p>;
+function EvidenceList({ evidence }: { evidence: Evidence[] }) {
+  return evidence.length ? <details className="provenance"><summary>View evidence</summary><EvidenceItems evidence={evidence} /></details> : <p className="muted">No grounded evidence is available for this run.</p>;
 }
 
-function ModeledPanel({ title, snapshot, evidence }: { title: string; snapshot?: MetricSnapshot; evidence: Array<{ id: string; url: string; domain: string; quote: string }> }) {
+function ModeledPanel({ title, snapshot, evidence }: { title: string; snapshot?: MetricSnapshot; evidence: Evidence[] }) {
   return <section className="panel metric-panel"><div className="panel-row"><div className="eyebrow">{title}</div>{snapshot && <span className={`freshness ${freshness(snapshot.computed_at).state}`}>{freshness(snapshot.computed_at).label}</span>}</div><h2>{snapshot?.label ?? "Gathering"}</h2>{snapshot ? <><p className="muted">{snapshot.confidence === "insufficient" ? "No modeled estimate yet." : `${snapshot.n} source reports · ${snapshot.confidence} confidence`}</p>{title === "Est. waitlist" && <p className="metric-subline">Modeled estimate — anecdotes must state both a wait and a date.</p>}{title === "Market sentiment" && <p className="metric-subline">Community feeling is separate from price movement.</p>}<EvidenceList evidence={evidence} /></> : <p className="muted">The next chatter scan will collect grounded community reports.</p>}</section>;
 }
 

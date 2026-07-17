@@ -11,7 +11,7 @@ export type MarketListing = {
   condition: string | null; scope_match_class: "in_scope" | "out_of_scope" | "uncertain"; scope_reason: string | null; anomaly_flags: string[];
   last_seen_at: Date; seller_name: string | null; seller_domain: string | null; seller_platform: string | null; seller_jurisdiction: string | null; trust_score: number | null; trust_rationale: string | null; curated: boolean | null;
 };
-export type Evidence = { id: string; url: string; domain: string; quote: string; retrieved_at: Date };
+export type Evidence = { id: string; url: string; domain: string; quote: string; retrieved_at: Date; link_status: "reachable" | "offline" | "unreachable" | "blocked_by_robots" | "invalid" | null; link_checked_at: Date | null };
 export type MovingAverage = { value: string | null; weeks: number; hasFullYear: boolean; backfillCount: number };
 export type CommunityAnecdote = { id: string; source_url: string; domain: string; quote: string; reported_at: Date | null; wait_months: string | null; region: string | null; purchase_context: string | null; retrieved_at: Date };
 export type NewsItem = { id: string; source_url: string; domain: string; title: string; summary: string; quote: string; published_at: Date | null; retrieved_at: Date };
@@ -66,7 +66,15 @@ export async function getMarketDetails(watchId: string) {
   const latest = new Map<MetricSnapshot["metric"], MetricSnapshot>();
   for (const metric of metrics.rows) if (!latest.has(metric.metric)) latest.set(metric.metric, metric);
   const snapshotIds = metrics.rows.map((metric) => metric.id);
-  const evidence = snapshotIds.length ? await db.query<Evidence & { attached_id: string }>("SELECT id, attached_id, url, domain, quote, retrieved_at FROM evidence WHERE attached_to = 'snapshot' AND attached_id = ANY($1::uuid[]) ORDER BY retrieved_at DESC", [snapshotIds]) : { rows: [] as Array<Evidence & { attached_id: string }> };
+  const evidence = snapshotIds.length ? await db.query<Evidence & { attached_id: string }>(
+    `SELECT e.id, e.attached_id, e.url, e.domain, e.quote, e.retrieved_at, c.status AS link_status, c.checked_at AS link_checked_at
+     FROM evidence e
+     LEFT JOIN LATERAL (
+       SELECT status, checked_at FROM link_checks WHERE url = e.url ORDER BY checked_at DESC LIMIT 1
+     ) c ON true
+     WHERE e.attached_to = 'snapshot' AND e.attached_id = ANY($1::uuid[])
+     ORDER BY e.retrieved_at DESC`, [snapshotIds],
+  ) : { rows: [] as Array<Evidence & { attached_id: string }> };
   const evidenceBySnapshot = new Map<string, Evidence[]>();
   for (const item of evidence.rows) evidenceBySnapshot.set(item.attached_id, [...(evidenceBySnapshot.get(item.attached_id) ?? []), item]);
   return { latest, metrics: metrics.rows, listings: listings.rows, movingAverages, evidenceBySnapshot, anecdotes: anecdotes.rows, news: news.rows, scopeChanges: scopeChanges.rows };

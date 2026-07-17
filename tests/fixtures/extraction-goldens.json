@@ -1,0 +1,18 @@
+[
+  {
+    "name": "structured full-set listing",
+    "file": "structured-full-set.html",
+    "sourceUrl": "https://fixtures.crowntracker.test/collection",
+    "fallbackTitle": "Fixture collection",
+    "options": { "allowLoosePage": false, "extractScopeAttributes": true },
+    "expected": [{ "title": "Rolex GMT-Master II 126710BLRO", "priceOriginal": 21995, "currency": "USD", "condition": "unworn", "productionYear": 2024, "hasPapers": true, "hasBox": true, "warranty": "factory" }]
+  },
+  {
+    "name": "structured pre-owned listing with a relative detail URL",
+    "file": "preowned-relative-url.html",
+    "sourceUrl": "https://fixtures.crowntracker.test/watches",
+    "fallbackTitle": "Fixture collection",
+    "options": { "allowLoosePage": false, "extractScopeAttributes": true },
+    "expected": [{ "title": "Rolex Explorer II 226570", "priceOriginal": 11800, "currency": "USD", "condition": "pre_owned", "productionYear": 2022, "hasPapers": true, "hasBox": null, "warranty": "third_party", "detailUrl": "https://fixtures.crowntracker.test/products/explorer-ii" }]
+  }
+]

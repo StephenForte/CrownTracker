@@ -4,6 +4,8 @@ export const CHATTER_STALE_AFTER_HOURS = 168;
 export const CHATTER_OUTDATED_AFTER_HOURS = 336;
 export const NEWS_MAX_AGE_DAYS = 30;
 export const WAITLIST_MIN_ANECDOTES = 3;
+export const LINK_CHECK_MAX_PER_RUN = 60;
+export const LINK_CHECK_STALE_DAYS = 30;
 
 export function sentimentLabel(value: number | null) {
   if (value === null) return "Gathering";

@@ -34,7 +34,7 @@ The login is intentionally a single env-var password for this one-user app. It i
 
 ## Phase 1 market research
 
-The lookup catalog gives instant confirmation for common references. On the add-watch screen, search it by reference, model, or nickname; unlisted references still require manual confirmation. Every tracked watch has a required nickname, which keeps the dashboard readable and adds a useful alias to research queries. Existing blank nicknames are backfilled by migration with a clearly editable `Reference <number> — <id>` placeholder. The catalog's first source of record is Rolex official product information; the documented fallback for discontinued references is WatchBase.
+The lookup catalog gives instant confirmation for common references. On the add-watch screen, search it by reference, model, nickname, or common alias (such as “Sprite” or “Explorer 2”); unlisted references still require manual confirmation. The local index now covers common Daytona, Submariner, GMT-Master II, Datejust, Oyster Perpetual, Explorer, Sea-Dweller, Yacht-Master, Sky-Dweller, Day-Date, Air-King, and Milgauss references. Only the four fully documented entries prefill market facts; identity-only matches deliberately leave specs and MSRP blank until confirmed. Every tracked watch has a required nickname, which keeps the dashboard readable and adds a useful alias to research queries. Existing blank nicknames are backfilled by migration with a clearly editable `Reference <number> — <id>` placeholder. The catalog's first source of record is Rolex official product information; the documented fallback for discontinued references is WatchBase.
 
 Each daily job discovers pages only on curated seller domains and checks the destination's `robots.txt` before retrieving it. Phase 1A accepts structured Product/Offer candidates only, keeps year and warranty unknown, and does not call an LLM, fetch detail pages, or convert currencies. Phase 1B treats each structured Product row as a candidate, fetches a robots-permitted detail page only when a required scope attribute is still unknown, grounds retained values against the row/detail source text, normalizes currency to USD, and classifies scope as in-scope, out-of-scope, or uncertain. Unknown required details carry a 0.5 weight rather than being guessed.
 
@@ -45,6 +45,14 @@ The dashboard separates **Avg asking (grey)** (unworn) from **Avg asking (resell
 The Mon/Thu cron performs independent chatter and news runs for every active watch. Chatter keeps only dated, source-quoted wait-time anecdotes and models a recency-weighted 25th–75th percentile when at least three reports exist. Sentiment uses a fixed three-dimension rubric and requires three grounded quotes from distinct sources; it is never blended with price movement. News remains a short, source-linked reference-specific list. The monthly job researches only non-curated sellers whose cached score is over 30 days old; seed scores are never overwritten by model inference.
 
 Every Phase 2 HTTP retrieval checks `robots.txt`, fails closed if it cannot be read, identifies CrownTracker, and is limited to one request per five seconds per domain. Source quotes remain capped at 300 characters. Dashboard filters support availability and biggest seven-day resell-price movement; scope changes are shown as history annotations without rewriting snapshots.
+
+## Phase 3 hardening
+
+The app is installable as a PWA. It intentionally does not cache authenticated pages or market data, so an installed app still loads fresh research and honors the current session.
+
+The monthly job also checks up to 60 source URLs that support the current metric snapshots and have not been checked in 30 days. Each result is append-only, robots-aware, rate-limited per domain, and shown beside affected evidence when a source was unavailable; the retained quote remains available. URLs that robots disallow are recorded as unverified rather than labeled offline.
+
+Cached listing pages and their expected extraction fields live in `tests/fixtures/`. `npm run test:extraction` verifies the deterministic extraction fixtures without provider cost. Before changing the Claude listing-extraction prompt, run `npm run verify:prompts` with `ANTHROPIC_API_KEY` set; it runs the same golden pages through the live grounding path and fails on an expected-field regression.
 
 ## Deploy
 

@@ -8,8 +8,8 @@ const tier = process.argv.find((argument) => argument.startsWith("--tier="))?.sp
 async function main() {
   console.log(JSON.stringify({ event: "pipeline_started", tier, at: new Date().toISOString() }));
   if (!["daily", "chatter", "monthly"].includes(tier)) throw new Error(`Unknown pipeline tier: ${tier}`);
-  const [{ db }, { getWatches }, { researchWatch }, { researchChatterWatch, researchNewsWatch, researchUncuratedSellers }] = await Promise.all([
-    import("../lib/db"), import("../lib/watches"), import("../lib/research"), import("../lib/community-research"),
+  const [{ db }, { getWatches }, { researchWatch }, { researchChatterWatch, researchNewsWatch, researchUncuratedSellers }, { checkLatestEvidenceLinks }] = await Promise.all([
+    import("../lib/db"), import("../lib/watches"), import("../lib/research"), import("../lib/community-research"), import("../lib/link-health"),
   ]);
   const watches = await getWatches("active");
   let failures = 0;
@@ -43,6 +43,17 @@ async function main() {
       const message = error instanceof Error ? error.message : "Unknown pipeline error";
       await db.query("UPDATE runs SET status = 'failed', finished_at = now(), error = $1::jsonb WHERE id = $2", [JSON.stringify({ message }), created.rows[0].id]);
       console.error(JSON.stringify({ event: "seller_research_failed", error: message }));
+    }
+    const linkCheck = await db.query<{ id: string }>("INSERT INTO runs (job_type, status) VALUES ('link_check', 'running') RETURNING id");
+    try {
+      const outcome = await checkLatestEvidenceLinks(db, linkCheck.rows[0].id);
+      await db.query("UPDATE runs SET status = 'succeeded', finished_at = now() WHERE id = $1", [linkCheck.rows[0].id]);
+      console.log(JSON.stringify({ event: "link_check_finished", ...outcome }));
+    } catch (error) {
+      failures += 1;
+      const message = error instanceof Error ? error.message : "Unknown link-check error";
+      await db.query("UPDATE runs SET status = 'failed', finished_at = now(), error = $1::jsonb WHERE id = $2", [JSON.stringify({ message }), linkCheck.rows[0].id]);
+      console.error(JSON.stringify({ event: "link_check_failed", error: message }));
     }
   }
   if (failures) throw new Error(`${failures} watch research run(s) failed.`);
