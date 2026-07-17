@@ -86,6 +86,8 @@ textarea { min-height: 100px; resize: vertical; }
 .market-stats span, .listing-table span, .history-list span { color: var(--muted); font-size: 13px; }
 .market-stats strong { font-size: 20px; }
 .market-note { color: var(--muted); font-size: 13px; line-height: 1.45; margin: 20px 0 0; }
+.where-to-buy-details { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 12px; }
+.where-to-buy-details summary { color: var(--forest); cursor: pointer; font-size: 13px; font-weight: 800; }
 .metric-panel { min-height: 285px; }
 .metric-panel.outdated h2 { color: var(--muted); }
 .metric-subline { margin: 18px 0 0; font-size: 13px; font-weight: 700; }

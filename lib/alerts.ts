@@ -5,15 +5,16 @@ export type WatchAlert = { watch_id: string; grey_above: string | null; grey_bel
 export type BudgetStatus = { used: number; cap: number | null; percentage: number | null; state: "normal" | "warning" | "paused" | "unconfigured" };
 
 const RESEND_URL = "https://api.resend.com/emails";
+type AlertEnvironment = Record<string, string | undefined>;
 
-export function notificationConfigurationError(env: NodeJS.ProcessEnv = process.env) {
+export function notificationConfigurationError(env: AlertEnvironment = process.env as AlertEnvironment) {
   const supplied = [env.RESEND_API_KEY, env.ALERT_FROM_EMAIL, env.ALERT_TO_EMAIL].filter(Boolean).length;
   if (supplied === 0) return null;
   if (!env.RESEND_API_KEY || !env.ALERT_FROM_EMAIL || !env.ALERT_TO_EMAIL) return "RESEND_API_KEY, ALERT_FROM_EMAIL, and ALERT_TO_EMAIL must be set together to enable email alerts.";
   return null;
 }
 
-export function emailAlertsEnabled(env: NodeJS.ProcessEnv = process.env) {
+export function emailAlertsEnabled(env: AlertEnvironment = process.env as AlertEnvironment) {
   return notificationConfigurationError(env) === null && Boolean(env.RESEND_API_KEY);
 }
 
