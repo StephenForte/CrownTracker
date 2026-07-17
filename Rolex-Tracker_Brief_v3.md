@@ -1,10 +1,12 @@
 # PRD: Rolex Market-Tracking Dashboard ("Crown Tracker")
 
-**Version:** 3.0 · **Date:** 2026-07-10 · **Owner:** Steve Forte · **Audience:** downstream AI builder implementing end-to-end
+**Version:** 3.1 · **Date:** 2026-07-16 · **Owner:** Steve Forte · **Audience:** downstream AI builder implementing end-to-end
 
-**v2 changes (from Steve's review):** asking-price labels made explicit on the dashboard (§5.2.3); seed source universe expanded beyond Chrono24 with named sites and access methods (Appendix A); credentials policy added — accounts for official APIs yes, credentialed page-scraping no (§9); eBay Browse API pulled forward to Phase 2 (§12); open question #3 resolved (§13).
+**v2 changes (from Steve's review):** asking-price labels made explicit on the dashboard (§5.2.3); seed source universe expanded beyond Chrono24 with named sites and access methods (Appendix A); credentials policy added — accounts for official APIs yes, credentialed page-scraping no (§9); eBay Browse API was initially pulled forward to Phase 2 (superseded by the v3.1 accuracy deferral); open question #3 resolved at the time.
 
 **v3 changes (simplification pass — Steve's directive: optimize every decision for easy to build, run, and maintain; prefer Render and simple tools):** hosting retargeted to **Render**; pg-boss queue and the always-on worker **deleted** — replaced by Render Cron Jobs running the pipeline as a plain CLI script; R2 object storage **deleted** — photos and snippets live in Postgres; Auth.js replaced by a **single env-var password**; Docker made optional (Render builds from GitHub); the v2 hybrid Mac-mini profile **cut from scope** (one-paragraph pattern retained); Tavily locked as the sole search API; seed-config editing UI cut in favor of JSON files in the repo. Full decision-by-decision review in the new **§7.7 Simplification Ledger**. Net result: **the entire system is one Render web service + three Render cron entries + one Postgres database + three external APIs.**
+
+**v3.1 implementation update (2026-07-16):** the first Phase 3 hardening slice is shipped: installable PWA shell (with no authenticated market-data cache), a monthly append-only and robots-aware link-health check for current evidence, and cached golden listing fixtures with both free deterministic and intentional live-prompt verification paths. The local reference index is expanded and now supports aliases/token matching while leaving unverified specs and MSRP blank. **All eBay API work is explicitly deferred** pending Steve's accuracy investigation; it must not be enabled, budgeted, or presented as a data source in the interim.
 
 ---
 
@@ -47,7 +49,7 @@ Rolex market data is fragmented, unofficial, and adversarial: ADs never publish 
 - **Not** a guaranteed-accurate price oracle: outputs are modeled estimates with stated uncertainty, not appraisals.
 - **Not** brands beyond Rolex in v1 (schema is brand-agnostic; UI and prompts are Rolex-tuned).
 - **No** headless-browser scraping or bot-evasion in MVP (see §9 for policy and the Phase-3 revisit).
-- **No** native mobile apps or push notifications in MVP (email alerts arrive Phase 3).
+- **No** native mobile apps or push notifications in MVP (the responsive web app is installable as a PWA; email alerts remain a later Phase 3 decision).
 
 ---
 
@@ -154,7 +156,7 @@ Computation (identical machinery, different condition filter):
 - **Confidence targets:** n target = 8 listings, diversity target = 4 domains, agreement = 1 − (IQR/median, capped at 1).
 - **Displayed as:** dashboard labels are explicitly **"Avg asking (grey)"** and **"Avg asking (resell)"** — e.g., "Avg asking (grey): $34,800 · n=14 · High confidence · 6h ago" with drawer. *(Decision, v2: asking prices accepted as the basis; the label carries the honesty.)*
 - **Refresh tier:** daily.
-- **Transaction-price signal (secondary):** where sold data is publicly published — Grailzee's completed-auctions pages, StockX last-sale data, auction-house results (Appendix A) — those observations are ingested with `price_basis='sold'` and shown as a separate "recent sold" line in the drawer, not blended into the asking average. eBay sold data via official API strengthens this in later phases (§12).
+- **Transaction-price signal (secondary):** where sold data is publicly published — Grailzee's completed-auctions pages, StockX last-sale data, auction-house results (Appendix A) — those observations may be ingested with `price_basis='sold'` and shown as a separate "recent sold" line in the drawer, never blended into the asking average. **eBay sold data is deferred pending accuracy validation (§12); do not enable it or represent it as an active source.**
 
 #### 5.2.5 & 5.2.6 52-week moving averages (grey and resell)
 
@@ -310,7 +312,9 @@ The v2 hybrid Mac-mini profile is **cut from v3 scope** as complexity that wasn'
 | Hybrid mini profile | Specified (Profile B) | **Cut; one-paragraph pattern retained (§7.6)** | Ops burden > savings; trivially recoverable later |
 | Seed-config editing UI (sellers, jurisdictions, settings) | Settings screens | **JSON files in repo, edit + push** | For one technical user, a settings UI is pure build cost; `settings` table keeps only runtime state (budget meter, refresh quota) |
 | Tiered cadence, confidence formula, provenance/evidence model, append-only history, anti-scam logic | — | **Kept unchanged** | This is essential complexity — the product *is* this logic; stripping it would simplify the wrong thing |
-| Email alerts, PWA, golden-set harness | Phase 3 | **Kept in Phase 3** | Already deferred |
+| Email alerts | Phase 3 | **Kept pending in Phase 3B** | Requires a deliberate notification policy and Resend configuration |
+| PWA, link-health, golden-set harness | Phase 3 | **Implemented in Phase 3A** | PWA avoids authenticated data caching; link checks and golden fixtures add operational guardrails without another service |
+| eBay APIs | Phase 2 / Phase 3 | **Deferred pending accuracy validation** | No credentials, spend, or product claims until the source-quality decision is revisited |
 
 ---
 
@@ -399,8 +403,8 @@ Retention: **everything append-only, kept indefinitely** — at this scale total
 1. Respect robots.txt; cache and re-check weekly per domain.
 2. No headless browsers, no CAPTCHA solving, no proxy rotation, no auth-walled content. If a site blocks plain fetches, rely on what the search API surfaces from it, or drop it as a source. Blocked domains get logged with a coverage note surfaced on a simple /status page ("Chrono24 detail pages unavailable — prices from other sources").
 3. Per-domain token bucket: ≤1 request / 5s / domain, jittered; global concurrency ≤4; honest User-Agent string.
-4. Prefer official APIs where they exist and fit the free/cheap tier: **Reddit API** (chatter), **eBay Browse API** (resell listings — Phase 2), **eBay Marketplace Insights API** (sold prices — Phase 3, requires eBay approval; builder applies early).
-4a. **Credentials policy (v2):** creating accounts to obtain **official API keys** (eBay developer account, Reddit app registration) is in-bounds and encouraged. Using a username/password to **log into a site and scrape member-only pages is out-of-bounds** — nearly every marketplace ToS prohibits automated access to authenticated areas, and login walls are an explicit signal the operator doesn't consent. Rule of thumb for the builder: credentials for APIs, never for pages. If a valuable source offers no API and gates data behind login, log it as a coverage gap and surface it to Steve rather than working around it.
+4. Prefer official APIs where they exist and fit the free/cheap tier: **Reddit API** (chatter). eBay Browse and Marketplace Insights are explicitly deferred pending source-accuracy validation; do not apply for, configure, or call them until Steve reverses that decision.
+4a. **Credentials policy (v2):** creating accounts to obtain **approved official API keys** (for example, Reddit app registration) is in-bounds. Using a username/password to **log into a site and scrape member-only pages is out-of-bounds** — nearly every marketplace ToS prohibits automated access to authenticated areas, and login walls are an explicit signal the operator doesn't consent. Rule of thumb for the builder: credentials for approved APIs, never for pages. If a valuable source offers no API and gates data behind login, log it as a coverage gap and surface it to Steve rather than working around it.
 5. Stored quotes ≤300 chars with attribution and link (fair-use posture); photos preferentially from official press assets with source recorded.
 6. Single-user personal research tool, data never republished — materially lower legal exposure than a commercial aggregator. *Not legal advice; if this ever becomes multi-user/commercial (§2.2), the acquisition posture must be re-reviewed first — flagged as a hard gate, not a nice-to-have.*
 
@@ -428,7 +432,7 @@ Problem: 52-wk MAs need a year of history that doesn't exist on day one.
 | 3 | Wild price outliers / scam asks | IQR filter + median aggregation; dropped-outlier count stored and shown in drawer |
 | 4 | Reference ambiguity (one ref, many dials) | Dial is a required spec when variants exist (§4); listings with mismatched/unstated dial → `uncertain` at 0.5 weight |
 | 5 | Same listing on multiple platforms | Dedupe hash (§5.2.3 step 4); cross-platform duplicates collapse to one observation, all URLs kept as evidence |
-| 6 | Source page dies after capture | Evidence rows are permanent; provenance drawer marks link-rot ("source offline, quote preserved") via monthly link check on evidence for latest snapshots |
+| 6 | Source page dies after capture | Evidence rows are permanent; a monthly append-only link-health job checks up to 60 URLs supporting the latest active-watch snapshots, respecting robots.txt and the 1 request/5s/domain limit. The provenance view marks checked-offline links while preserving the quote; robots-blocked URLs are shown as unverified, not offline. |
 | 7 | Search/LLM API outage | Inline retry ×2 with backoff per watch; watch marked `failed` in `runs` and the next cron run is the retry; dashboard carries forward last snapshot with staleness badges (§5.2 conventions); status banner if all of yesterday's runs failed |
 | 8 | Cost overrun | Per-run cost meter (`runs` table); monthly budget cap in settings — at 80% a dashboard banner warns (email arrives Phase 3), at 100% pause all non-manual runs (kill switch); manual refresh capped 5/day |
 | 9 | Rolex price change / new model displacing a tracked ref | Retail sanity check (§5.2.2) + news scan naturally captures it |
@@ -454,9 +458,11 @@ Problem: 52-wk MAs need a year of history that doesn't exist on day one.
 
 **Phase 2 — Judgment layer (~1 week):** `chatter_scan` (waitlist estimate + sentiment with rubric/EWMA), `news_scan`, LLM long-tail seller research, evidence drawers everywhere, sort/filter, scope-change annotations. *Exit: every §5.2 field live.*
 
-**Phase 2 also includes (v2):** eBay Browse API integration for resell-listing breadth, and ingestion of published sold prices (Grailzee completed auctions, StockX last-sale) as the separate `sold` price basis (§5.2.3).
+**eBay deferral (2026-07-16):** eBay Browse API integration and Marketplace Insights sold-price work are deferred from Phase 2 and all current Phase 3 scope while Steve evaluates their accuracy. Do not add eBay credentials, calls, budget assumptions, or UI claims until this decision is revisited.
 
-**Phase 3 — Hardening & reach (ongoing, prioritized by observed pain):** eBay Marketplace Insights API for sold-price depth (pending eBay approval — apply during Phase 2), email alerts via Resend (price threshold, staleness, budget), PWA installability, link-rot checker, prompt-regression test harness (golden set of cached pages with expected extractions — run on every prompt change), coverage report per source domain, *only if needed:* headless-fetch reconsideration with explicit ToS review, or the Mac-mini pipeline pattern (§7.6) if compute outgrows a $7 instance.
+**Phase 3A — Hardening (implemented 2026-07-16):** PWA installability; monthly link-health checks with immutable results; and a prompt-regression harness built from cached listing fixtures and expected extraction fields. The normal test path is free and deterministic; a separate live Anthropic command is required before changing the listing-extraction prompt, so provider cost is intentional. The catalog now has a broader local reference index with aliases and token matching; only fully sourced entries prefill market facts.
+
+**Phase 3B — Reach (pending, prioritized by observed pain):** email alerts via Resend (price threshold, staleness, budget), coverage report per source domain, and only if needed a headless-fetch reconsideration with explicit ToS review or the Mac-mini pipeline pattern (§7.6) if compute outgrows a $7 instance. eBay Marketplace Insights and Browse API integration remain explicitly on hold pending data-quality validation.
 
 ---
 
@@ -464,7 +470,7 @@ Problem: 52-wk MAs need a year of history that doesn't exist on day one.
 
 1. **Chrono24 coverage gap** (biggest data risk): decide empirically in Phase 1 how much price signal arrives via search-API snippets and fetchable aggregator pages; if grey-price confidence sits at Low for popular refs, escalate to Steve with the measured gap before touching headless options.
 2. **Search coverage (v3: swap, don't add):** Tavily is the sole vendor; in Phase 2, measure whether its Reddit/forum coverage suffices for chatter. If not, swap SerpAPI in behind the single search interface for chatter scans — never run two vendors speculatively.
-3. ~~Sold vs. asking prices~~ **Resolved (v2):** asking prices accepted as the primary basis; dashboard labels read "Avg asking (grey/resell)"; published sold data ingested as a separate `sold` series from Phase 2.
+3. **Sold vs. asking prices:** asking prices remain the primary basis and dashboard labels read "Avg asking (grey/resell)." Existing public sold signals are separate when available; eBay Browse and Marketplace Insights data are deferred pending accuracy validation and must not be blended into asking-price metrics.
 4. **WatchCharts ToS for backfill:** the one-time backfill reads public chart pages; if their robots.txt disallows, fall back to watch-media price-history articles — builder must check at implementation time, per §9 policy.
 5. **Rolex reference spec source of record:** rolex.com drops discontinued models; pick and document one fallback spec database in Phase 0.
 6. **LLM cost drift:** token prices and model quality change quarterly; the two-tier model split and the provider-swap config (§7) are the hedge — builder should log per-run token spend from day one (schema supports it).
@@ -494,7 +500,7 @@ Candidate sources beyond Chrono24 for price discovery, grouped by role. Ship thi
 | European Watch Co. | Resell | Asking | Public pages + search API | |
 | DavidSW | Grey + resell | Asking | Public pages + search API | Community-favorite grey dealer; also seeds trust list |
 | Jomashop | Grey (unworn) | Asking | Public pages + search API | Pure grey-market signal for current-production refs |
-| eBay | Resell | Asking (Browse API, Ph 2); Sold (Marketplace Insights, Ph 3) | **Official API** | Credentials-for-API case (§9.4a); apply for Insights early |
+| eBay | Potential resell / sold signal | **Deferred — not an active source** | No access configured | Pending Steve's accuracy validation; no API credentials, requests, budget, or UI claims |
 | Grailzee | Resell | **Sold** (completed auctions, publicly listed) | Public pages + search API | Real transaction prices — feeds the `sold` series |
 | StockX (watches) | Resell | **Sold** (last-sale market data) | Public pages | Transaction-based; coverage skews popular refs |
 | Phillips / Sotheby's / Christie's results | Resell (rare/vintage) | **Sold** | Public results pages | Sparse but authoritative for rarer refs |
