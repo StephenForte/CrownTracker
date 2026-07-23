@@ -49,7 +49,7 @@ export async function getSevenDayMovers(watchIds: string[]) {
 }
 
 export async function getMarketDetails(watchId: string) {
-  const [metrics, listings, movingAverages, anecdotes, news, scopeChanges] = await Promise.all([
+  const [metrics, listings, movingAverages, anecdotes, news, scopeChanges, chatterRun] = await Promise.all([
     db.query<MetricSnapshot>(`SELECT * FROM metric_snapshots WHERE watch_id = $1 ORDER BY computed_at DESC LIMIT 40`, [watchId]),
     db.query<MarketListing>(
       `SELECT l.id, l.source_url, l.detail_url, l.title, l.price_usd, l.price_original, l.currency, l.condition, l.scope_match_class, l.scope_reason, l.anomaly_flags, l.last_seen_at,
@@ -63,6 +63,7 @@ export async function getMarketDetails(watchId: string) {
     db.query<CommunityAnecdote>("SELECT * FROM community_anecdotes WHERE watch_id = $1 ORDER BY reported_at DESC NULLS LAST, retrieved_at DESC LIMIT 20", [watchId]),
     db.query<NewsItem>("SELECT DISTINCT ON (source_url) * FROM news_items WHERE watch_id = $1 AND retrieved_at >= now() - ($2 || ' days')::interval ORDER BY source_url, retrieved_at DESC LIMIT 5", [watchId, NEWS_WINDOW_DAYS]),
     db.query<ScopeChange>("SELECT * FROM scope_changes WHERE watch_id = $1 ORDER BY changed_at DESC LIMIT 12", [watchId]),
+    db.query<{ completed: boolean }>("SELECT EXISTS(SELECT 1 FROM runs WHERE watch_id = $1 AND job_type = 'chatter_scan' AND status = 'succeeded') AS completed", [watchId]),
   ]);
   const latest = new Map<MetricSnapshot["metric"], MetricSnapshot>();
   for (const metric of metrics.rows) if (!latest.has(metric.metric)) latest.set(metric.metric, metric);
@@ -78,7 +79,7 @@ export async function getMarketDetails(watchId: string) {
   ) : { rows: [] as Array<Evidence & { attached_id: string }> };
   const evidenceBySnapshot = new Map<string, Evidence[]>();
   for (const item of evidence.rows) evidenceBySnapshot.set(item.attached_id, [...(evidenceBySnapshot.get(item.attached_id) ?? []), item]);
-  return { latest, metrics: metrics.rows, listings: listings.rows, movingAverages, evidenceBySnapshot, anecdotes: anecdotes.rows, news: news.rows, scopeChanges: scopeChanges.rows };
+  return { latest, metrics: metrics.rows, listings: listings.rows, movingAverages, evidenceBySnapshot, anecdotes: anecdotes.rows, news: news.rows, scopeChanges: scopeChanges.rows, hasCompletedChatterRun: chatterRun.rows[0]?.completed ?? false };
 }
 
 /**
