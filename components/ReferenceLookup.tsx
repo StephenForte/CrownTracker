@@ -70,11 +70,24 @@ export function ReferenceLookup({ onSelect }: Props) {
     }
   }
 
-  function chooseArchive(candidate: WatchBaseCandidate) {
+  async function chooseArchive(candidate: WatchBaseCandidate) {
     setError("");
-    setQuery(candidate.referenceNumber);
-    setArchiveCandidates([]);
-    onSelect(candidate);
+    setLookingUp(true);
+    try {
+      const response = await fetch(`/api/watchbase-lookup?id=${encodeURIComponent(candidate.id)}&reference=${encodeURIComponent(candidate.referenceNumber)}`);
+      const data = await response.json() as WatchBaseCandidate & { error?: string };
+      if (!response.ok) {
+        setError(data.error ?? "Could not load the WatchBase details.");
+        return;
+      }
+      setQuery(data.referenceNumber);
+      setArchiveCandidates([]);
+      onSelect(data);
+    } catch {
+      setError("Could not load the WatchBase details. Please try again.");
+    } finally {
+      setLookingUp(false);
+    }
   }
 
   return <div className="reference-lookup">
@@ -92,8 +105,8 @@ export function ReferenceLookup({ onSelect }: Props) {
       </button>)}
     </div>}
     {archiveCandidates.length > 0 && <div className="catalog-results" role="listbox" aria-label="WatchBase archive matches">
-      {archiveCandidates.map((candidate) => <button type="button" className="catalog-result" key={candidate.id} onClick={() => chooseArchive(candidate)}>
-        <strong>{candidate.nickname}</strong><span>{candidate.referenceNumber} · {candidate.modelName}</span>
+      {archiveCandidates.map((candidate) => <button type="button" className="catalog-result" key={candidate.id} onClick={() => void chooseArchive(candidate)} disabled={lookingUp}>
+        <strong>{candidate.nickname}</strong><span>{lookingUp ? "Loading technical details…" : `${candidate.referenceNumber} · ${candidate.modelName}`}</span>
       </button>)}
     </div>}
     {error && <p className="error" role="alert">{error}</p>}

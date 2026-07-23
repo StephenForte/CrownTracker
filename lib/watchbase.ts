@@ -30,6 +30,22 @@ export async function lookupWatchBase(pool: Pool, reference: string, options: { 
   return watchBaseCandidates(await response.json(), normalizedReference);
 }
 
+export async function getWatchBaseDetails(pool: Pool, id: string, reference: string, options: { env?: Environment; fetchFn?: FetchLike } = {}) {
+  const env = options.env ?? process.env, configurationError = watchBaseConfigurationError(env);
+  if (configurationError) throw new Error(configurationError);
+  await reserveWatchBaseCredit(pool, env);
+  const url = new URL(`${apiBase}/watch`);
+  url.searchParams.set("key", env.WATCHBASE_API_KEY!);
+  url.searchParams.set("format", "json");
+  url.searchParams.set("id", id);
+  const response = await (options.fetchFn ?? fetch)(url, { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(15_000) });
+  if (!response.ok) throw new Error(`WatchBase detail lookup failed with HTTP ${response.status}.`);
+  const candidates = watchBaseCandidates(await response.json(), reference);
+  const match = candidates.find((candidate) => candidate.id === id) ?? candidates[0];
+  if (!match) throw new Error("WatchBase returned no usable Rolex details for this reference.");
+  return match;
+}
+
 export function watchBaseCandidates(payload: unknown, searchedReference: string): WatchBaseCandidate[] {
   const normalizedReference = normalizeReference(searchedReference);
   const candidates = recordsIn(payload)
