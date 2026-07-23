@@ -16,6 +16,15 @@ services:
         sync: false
       - key: SESSION_SECRET
         generateValue: true
+      # Enables the authenticated Streamable HTTP MCP endpoint at /mcp. Set
+      # this to the canonical public web-service URL, e.g.
+      # https://crown-tracker.onrender.com (no trailing slash).
+      - key: MCP_PUBLIC_BASE_URL
+        sync: false
+      # Optional comma-separated browser origins beyond Claude's standard web
+      # origins. Server-to-server Claude connector calls omit Origin.
+      - key: MCP_ALLOWED_ORIGINS
+        sync: false
       # Manual “Refresh now” executes in the web service, so it needs the same
       # research-provider configuration as the scheduled daily cron.
       - key: TAVILY_API_KEY
