@@ -5,8 +5,10 @@ import { db } from "@/lib/db";
 import { ownerEmail } from "@/lib/owner";
 import { hasValidYearRange, scopeSchema } from "@/lib/watch-schema";
 import { isPhase1bEnabled, phase1aScopeError } from "@/lib/phase1b";
+import { nullableTrackedWatchUrlSchema } from "@/lib/tracked-watch-url";
 
 const nicknameSchema = z.object({ nickname: z.string().trim().min(2).max(80) });
+const trackedWatchUrlInput = z.object({ trackedWatchUrl: nullableTrackedWatchUrlSchema });
 
 export async function PATCH(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   if (!(await hasSession())) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -26,6 +28,10 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
       if ((error as { code?: string }).code === "23505") return NextResponse.json({ error: "This reference already uses that nickname." }, { status: 409 });
       throw error;
     }
+  } else if ("trackedWatchUrl" in body) {
+    const trackedWatchUrl = trackedWatchUrlInput.safeParse(body);
+    if (!trackedWatchUrl.success) return NextResponse.json({ error: "Enter a valid http:// or https:// watch URL, or leave it blank to remove the link." }, { status: 400 });
+    result = await db.query(`UPDATE watches SET tracked_watch_url = $1, updated_at = now() WHERE ${ownership} RETURNING id`, [trackedWatchUrl.data.trackedWatchUrl, id, ownerEmail]);
   } else {
     const scope = scopeSchema.safeParse(body.scope);
     if (!scope.success || !hasValidYearRange(scope.data)) return NextResponse.json({ error: "Invalid market scope." }, { status: 400 });

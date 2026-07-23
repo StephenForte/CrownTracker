@@ -56,6 +56,7 @@ export function NewWatchForm({ phase1bEnabled }: { phase1bEnabled: boolean }) {
       ...form,
       modelName: form.modelName.trim(),
       nickname: form.nickname.trim(),
+      trackedWatchUrl: String(fields.get("trackedWatchUrl") ?? ""),
       retailPriceUsd: form.retailPriceUsd === null ? null : Number(form.retailPriceUsd),
       specs: { ...form.specs, caseSizeMm: form.specs.caseSizeMm ? Number(form.specs.caseSizeMm) : null },
       scope: {
@@ -104,6 +105,7 @@ export function NewWatchForm({ phase1bEnabled }: { phase1bEnabled: boolean }) {
           <div className="field"><label htmlFor="referenceNumber">Reference number</label><input id="referenceNumber" value={form.referenceNumber} onChange={(event) => update("referenceNumber", event.target.value)} required /></div>
           <div className="field"><label htmlFor="modelName">Model name</label><input id="modelName" value={form.modelName} onChange={(event) => update("modelName", event.target.value)} required /></div>
           <div className="field"><label htmlFor="nickname">Nickname <span aria-hidden="true">*</span></label><input id="nickname" value={form.nickname} onChange={(event) => update("nickname", event.target.value)} placeholder="e.g. Panda or Black Sub" minLength={2} maxLength={80} required aria-describedby="nickname-help" /><span id="nickname-help" className="field-hint">Required: this name appears on your dashboard and helps research find alias-based discussion.</span></div>
+          <div className="field"><label htmlFor="trackedWatchUrl">Watch URL</label><input id="trackedWatchUrl" name="trackedWatchUrl" type="url" placeholder="https://…" maxLength={2000} aria-describedby="tracked-watch-url-help" /><span id="tracked-watch-url-help" className="field-hint">Optional: save the direct link to the specific watch you are tracking. It is not used by market research.</span></div>
           <div className="field"><label htmlFor="retailPrice">Retail price (USD)</label><input id="retailPrice" type="number" min="0" value={form.retailPriceUsd ?? ""} onChange={(event) => update("retailPriceUsd", event.target.value ? Number(event.target.value) : null)} /></div>
           <div className="field"><label htmlFor="caseSize">Case size (mm)</label><input id="caseSize" type="number" min="1" value={form.specs.caseSizeMm ?? ""} onChange={(event) => updateSpec("caseSizeMm", event.target.value ? Number(event.target.value) : null)} /></div>
           <div className="field"><label htmlFor="dial">Dial</label><input id="dial" value={form.specs.dial ?? ""} onChange={(event) => updateSpec("dial", event.target.value)} /></div>

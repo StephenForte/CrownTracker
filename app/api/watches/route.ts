@@ -6,10 +6,12 @@ import { db } from "@/lib/db";
 import { getOwnerId } from "@/lib/owner";
 import { hasValidYearRange, scopeSchema } from "@/lib/watch-schema";
 import { isPhase1bEnabled, phase1aScopeError } from "@/lib/phase1b";
+import { nullableTrackedWatchUrlSchema } from "@/lib/tracked-watch-url";
 
 const watchInput = z.object({
   referenceNumber: z.string().trim().min(3).max(30), modelName: z.string().trim().min(2).max(120), nickname: z.string().trim().min(2).max(80),
   retailPriceUsd: z.number().nonnegative().nullable(), discontinued: z.boolean(), photoSourceUrl: z.string().url().nullable(),
+  trackedWatchUrl: nullableTrackedWatchUrlSchema.optional(),
   specs: z.object({ caseSizeMm: z.number().positive().nullable(), dial: z.string().max(100).optional(), bezel: z.string().max(100).optional(), bracelet: z.string().max(100).optional(), movement: z.string().max(100).optional(), material: z.string().max(100).optional() }),
   scope: scopeSchema,
   notes: z.string().max(2000).optional(),
@@ -25,9 +27,9 @@ export async function POST(request: NextRequest) {
   if (phase1aError) return NextResponse.json({ error: phase1aError }, { status: 400 });
   try {
     const result = await db.query<{ id: string }>(
-      `INSERT INTO watches (user_id, reference_number, model_name, nickname, specs, scope, photo_source_url, retail_price_usd, discontinued, notes)
-       VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8,$9,$10) RETURNING id`,
-      [await getOwnerId(), normalizeReference(watch.referenceNumber), watch.modelName.trim(), watch.nickname.trim(), JSON.stringify(watch.specs), JSON.stringify(watch.scope), watch.photoSourceUrl, watch.retailPriceUsd, watch.discontinued, watch.notes?.trim() || null],
+      `INSERT INTO watches (user_id, reference_number, model_name, nickname, specs, scope, photo_source_url, tracked_watch_url, retail_price_usd, discontinued, notes)
+       VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8,$9,$10,$11) RETURNING id`,
+      [await getOwnerId(), normalizeReference(watch.referenceNumber), watch.modelName.trim(), watch.nickname.trim(), JSON.stringify(watch.specs), JSON.stringify(watch.scope), watch.photoSourceUrl, watch.trackedWatchUrl ?? null, watch.retailPriceUsd, watch.discontinued, watch.notes?.trim() || null],
     );
     return NextResponse.json({ id: result.rows[0].id }, { status: 201 });
   } catch (error: unknown) {
