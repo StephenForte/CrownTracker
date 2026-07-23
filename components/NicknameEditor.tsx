@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 export function NicknameEditor({ id, nickname }: { id: string; nickname: string }) {
@@ -30,10 +31,10 @@ export function NicknameEditor({ id, nickname }: { id: string; nickname: string 
     }
   }
 
-  if (!open) return <button className="secondary" type="button" onClick={() => setOpen(true)}>Edit nickname</button>;
+  if (!open) return <div className="inline-actions"><Link className="button secondary detail-back-link" href="/">← Dashboard</Link><button className="secondary" type="button" onClick={() => setOpen(true)}>Edit nickname</button></div>;
   return <form className="inline-editor" onSubmit={submit}>
     <div className="field"><label htmlFor="edit-nickname">Nickname</label><input id="edit-nickname" value={value} onChange={(event) => setValue(event.target.value)} minLength={2} maxLength={80} required autoFocus /></div>
-    <div className="inline-actions"><button type="submit" disabled={saving}>{saving ? "Saving…" : "Save nickname"}</button><button className="secondary" type="button" onClick={() => { setValue(nickname); setError(""); setOpen(false); }}>Cancel</button></div>
+    <div className="inline-actions"><Link className="button secondary detail-back-link" href="/">← Dashboard</Link><button type="submit" disabled={saving}>{saving ? "Saving…" : "Save nickname"}</button><button className="secondary" type="button" onClick={() => { setValue(nickname); setError(""); setOpen(false); }}>Cancel</button></div>
     {error && <p className="error" role="alert">{error}</p>}
   </form>;
 }

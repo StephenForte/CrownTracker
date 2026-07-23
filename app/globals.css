@@ -29,6 +29,8 @@ h2 { font-size: 28px; }
 .card { min-height: 210px; display: flex; flex-direction: column; justify-content: space-between; text-decoration: none; transition: transform .15s ease; }
 .card:hover { transform: translateY(-2px); }
 .market-card { min-height: 250px; }
+.market-card-main { color: inherit; display: flex; flex: 1; flex-direction: column; justify-content: space-between; text-decoration: none; }
+.tracked-watch-card-link { align-self: flex-start; margin-top: 14px; font-size: 13px; font-weight: 800; }
 .card-heading, .panel-row, .card-footer, .detail-actions { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .metric-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 22px 0; }
 .metric-pair > div { display: grid; gap: 5px; }
@@ -68,6 +70,7 @@ textarea { min-height: 100px; resize: vertical; }
 .login .panel { padding: 30px; }
 .detail-header { padding: 45px 0 24px; display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; }
 .detail-header h1 { font-size: 46px; }
+.detail-back-link { display: inline-flex; margin: 0; }
 .identity-panel { align-items: center; display: flex; gap: 20px; justify-content: space-between; }
 .identity-panel .muted { margin: 0; max-width: 630px; }
 .inline-editor { display: grid; gap: 10px; min-width: min(100%, 360px); }
