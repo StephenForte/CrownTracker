@@ -10,6 +10,7 @@ export function ReferenceLookup({ onSelect }: Props) {
   const [matches, setMatches] = useState<CatalogSuggestion[]>([]);
   const [error, setError] = useState("");
   const [lookingUp, setLookingUp] = useState(false);
+  const hasQuery = Boolean(query.trim());
 
   useEffect(() => {
     const controller = new AbortController();
@@ -50,7 +51,8 @@ export function ReferenceLookup({ onSelect }: Props) {
       <input id="reference-search" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); if (query.trim()) void choose(query); } }} placeholder="Search ref, model, or nickname" autoComplete="off" />
       <button type="button" onClick={() => void choose(query)} disabled={!query.trim() || lookingUp}>{lookingUp ? "Looking up…" : "Use reference"}</button>
     </div>
-    <p className="field-hint">Try “Pepsi,” “Sprite,” “Explorer 2,” “Sub,” or a reference number. The local index recognizes common aliases; you can also enter an unlisted reference and confirm it manually.</p>
+    <p className="field-hint">Try “Pepsi,” “Sprite,” “Explorer 2,” “Sub,” or a reference number. If it is not in the local index, use the public archive to confirm the exact variant, then add it manually.</p>
+    {hasQuery && <p className="field-hint"><a href={`https://watchbase.com/search#q=${encodeURIComponent(query.trim())}`} target="_blank" rel="noreferrer">Search WatchBase’s public archive for “{query.trim()}” ↗</a></p>}
     {matches.length > 0 && <div className="catalog-results" role="listbox" aria-label="Matching references">
       {matches.map((match) => <button type="button" className="catalog-result" key={match.referenceNumber} onClick={() => void choose(match.referenceNumber)}>
         <strong>{match.nickname}</strong><span>{match.referenceNumber} · {match.modelName}</span>

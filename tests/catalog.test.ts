@@ -68,7 +68,8 @@ test("lookupReference returns fallback for unknown references", () => {
   assert.equal(unknown.retailPriceUsd, null);
   assert.equal(unknown.discontinued, false);
   assert.deepEqual(unknown.specs, {});
-  assert.equal(unknown.source.name, "WatchBase fallback");
+  assert.equal(unknown.source.name, "WatchBase archive search");
+  assert.equal(unknown.source.url, "https://watchbase.com/search#q=UNKNOWN123");
 });
 
 test("searchCatalog returns all watches for empty query", () => {

@@ -75,7 +75,7 @@ export function lookupReference(reference: string): WatchDraft {
     discontinued: false,
     photoSourceUrl: null,
     specs: {},
-    source: { name: "WatchBase fallback", url: "https://watchbase.com/", note: "No local index match. Confirm the reference against Rolex, or WatchBase for discontinued models, then complete the fields manually." },
+    source: { name: "WatchBase archive search", url: `https://watchbase.com/search#q=${encodeURIComponent(referenceNumber)}`, note: "No local index match. Search this reference in the public WatchBase archive, confirm the exact variant, then complete the fields manually." },
   };
 }
 
