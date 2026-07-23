@@ -130,6 +130,7 @@ textarea { min-height: 100px; resize: vertical; }
 .news-list small { color: var(--muted); }
 .coverage-table { padding: 0; overflow: hidden; }
 .coverage-row { display: grid; grid-template-columns: minmax(180px, 1.4fr) repeat(2, minmax(80px, .55fr)) minmax(145px, 1fr) minmax(180px, 1.2fr); gap: 14px; align-items: center; padding: 14px 18px; border-top: 1px solid var(--line); font-size: 14px; }
+.coverage-table.connectors-table .coverage-row { grid-template-columns: minmax(160px, 1.3fr) minmax(140px, 1fr) repeat(2, minmax(120px, .9fr)) minmax(80px, .5fr) minmax(100px, .6fr); }
 .coverage-row:first-child { border-top: 0; }
 .coverage-row small { display: block; color: var(--muted); margin-top: 4px; }
 .coverage-head { background: #f5f5f0; color: var(--muted); font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }

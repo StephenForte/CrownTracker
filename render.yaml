@@ -16,10 +16,18 @@ services:
         sync: false
       - key: SESSION_SECRET
         generateValue: true
-      # Enables the authenticated Streamable HTTP MCP endpoint at /mcp. Set
-      # this to the canonical public web-service URL, e.g.
-      # https://crown-tracker.onrender.com (no trailing slash).
+      # Remote MCP is off unless this is exactly "true". Also requires
+      # MCP_PUBLIC_BASE_URL and MCP_DATABASE_URL.
+      - key: MCP_REMOTE_ENABLED
+        value: "false"
+      # Canonical public web-service URL, e.g. https://crown-tracker.onrender.com
+      # (no trailing slash). Required only when MCP_REMOTE_ENABLED=true; must be
+      # HTTPS in production.
       - key: MCP_PUBLIC_BASE_URL
+        sync: false
+      # Least-privilege Postgres URL for the remote MCP runtime (crown_tracker_mcp).
+      # Provision with: npm run mcp:provision-readonly
+      - key: MCP_DATABASE_URL
         sync: false
       # Optional comma-separated browser origins beyond Claude's standard web
       # origins. Server-to-server Claude connector calls omit Origin.
@@ -130,6 +138,19 @@ services:
         sync: false
       - key: ALERT_TO_EMAIL
         sync: false
+
+  - type: cron
+    runtime: node
+    name: crown-tracker-mcp-oauth-cleanup
+    plan: starter
+    schedule: "15 5 * * *"
+    buildCommand: npm ci
+    startCommand: npm run mcp:oauth-cleanup
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: crown-tracker-db
+          property: connectionString
 
 databases:
   - name: crown-tracker-db

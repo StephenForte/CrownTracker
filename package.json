@@ -9,11 +9,14 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",
+    "test:integration": "tsx --test tests/integration/*.test.ts",
     "test:extraction": "tsx --test tests/extraction-golden.test.ts",
     "verify:prompts": "tsx scripts/verify-extraction-goldens.ts",
     "db:migrate": "tsx scripts/migrate.ts",
     "pipeline": "tsx scripts/pipeline.ts",
-    "mcp:metrics": "tsx scripts/crown-tracker-mcp.ts"
+    "mcp:metrics": "tsx scripts/crown-tracker-mcp.ts",
+    "mcp:provision-readonly": "tsx scripts/provision-mcp-readonly.ts",
+    "mcp:oauth-cleanup": "tsx scripts/mcp-oauth-cleanup.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
