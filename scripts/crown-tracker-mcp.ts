@@ -1,12 +1,16 @@
 import { config } from "dotenv";
+import { dirname, resolve } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import * as z from "zod/v4";
 
-// CoWork starts this outside Next.js, so load the local development database
-// configuration before importing the pool. An explicitly supplied environment
-// variable always takes precedence.
-config({ path: ".env.local", override: false });
+// MCP clients can launch this outside the repository. Resolve the local
+// development database configuration from this script's location instead of
+// the caller's working directory. An explicitly supplied environment variable
+// always takes precedence.
+const projectRoot = resolve(dirname(process.argv[1] ?? process.cwd()), "..");
+config({ path: resolve(projectRoot, ".env.local"), override: false });
+process.chdir(projectRoot);
 
 async function main() {
   // `tsx` executes this project's scripts as CommonJS. Require after loading
