@@ -50,10 +50,14 @@ export async function researchNewsWatch(pool: Pool, watch: Watch, runId: string)
 // Unknown sellers are researched only after they exist in the local seller
 // table. Curated seed scores are never replaced by model inference.
 export async function researchUncuratedSellers(pool: Pool, runId: string) {
-  ensureProviders();
   const sellers = (await pool.query<{ id: string; name: string; jurisdiction_modifier: number }>(
     "SELECT id, name, jurisdiction_modifier FROM sellers WHERE curated = false AND (last_researched_at IS NULL OR last_researched_at < now() - interval '30 days') ORDER BY last_researched_at NULLS FIRST LIMIT 12",
   )).rows;
+  // A monthly run may have nothing to research. Keep its no-cost link-health
+  // work available in that case instead of requiring paid-provider credentials
+  // just to discover an empty seller queue.
+  if (!sellers.length) return { discoveryQueries: 0, sellersConsidered: 0, updated: 0 };
+  ensureProviders();
   let queries = 0, updated = 0;
   for (const seller of sellers) {
     const sources = await readSources((await search(pool, [`${seller.name} watch dealer review legit scam`])).slice(0, 6));
