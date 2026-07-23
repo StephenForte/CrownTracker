@@ -12,11 +12,13 @@
     "test:extraction": "tsx --test tests/extraction-golden.test.ts",
     "verify:prompts": "tsx scripts/verify-extraction-goldens.ts",
     "db:migrate": "tsx scripts/migrate.ts",
-    "pipeline": "tsx scripts/pipeline.ts"
+    "pipeline": "tsx scripts/pipeline.ts",
+    "mcp:metrics": "tsx scripts/crown-tracker-mcp.ts"
   },
   "dependencies": {
-    "next": "15.5.20",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "dotenv": "^16.5.0",
+    "next": "15.5.20",
     "pg": "^8.13.3",
     "react": "19.0.0",
     "react-dom": "19.0.0",

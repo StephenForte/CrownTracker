@@ -32,6 +32,12 @@ Phase 1B’s expanded price scan requires all three of `PHASE1B_ENRICHMENT_ENABL
 
 The login is intentionally a single env-var password for this one-user app. It is not multi-user authentication.
 
+## CoWork metrics MCP
+
+`npm run mcp:metrics` starts a local stdio MCP server for a CoWork job. Its one read-only tool, `get_active_watch_metrics`, returns all active watches with the latest grey and resell **asking-price** estimates, availability, sample sizes, confidence, and freshness. It reads the same Postgres snapshots as the dashboard; it does not refresh research or call Tavily, Anthropic, or WatchBase.
+
+The bundled personal plugin points CoWork at this repository's `tsx` runtime and loads `.env.local` before it opens the database. Keep the plugin local to the machine that has the CrownTracker database and dependencies. In a job, ask: “Use CrownTracker Metrics to report the active watches and their current metrics.” Missing metrics are returned as `null` / `Gathering`, never as zero.
+
 ## Phase 1 market research
 
 The lookup catalog gives instant confirmation for common references. On the add-watch screen, search it by reference, model, nickname, or common alias (such as “Sprite” or “Explorer 2”). For an unlisted reference, **Look up archive** calls WatchBase only when pressed and presents up to eight Rolex candidates; selecting one makes one further explicit detail request and then pre-fills source-grounded basics, which must still be confirmed before saving. Set both `WATCHBASE_API_KEY` and an intentional `WATCHBASE_LOOKUP_MONTHLY_CREDIT_CAP` (start with `10`) to enable it. The cap is atomically counted in Postgres before every archive request, with no automatic retries or background calls. The local index now covers common Daytona, Submariner, GMT-Master II, Datejust, Oyster Perpetual, Explorer, Sea-Dweller, Yacht-Master, Sky-Dweller, Day-Date, Air-King, and Milgauss references. Only the four fully documented entries prefill market facts; identity-only matches deliberately leave specs and MSRP blank until confirmed. The catalog's first source of record is Rolex official product information; the documented fallback for discontinued references is WatchBase. Every tracked watch has a required nickname, which keeps the dashboard readable and adds a useful alias to research queries. Existing blank nicknames are backfilled by migration with a clearly editable `Reference <number> — <id>` placeholder.
