@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { WatchDraft } from "@/lib/catalog";
 import { ReferenceLookup } from "@/components/ReferenceLookup";
@@ -23,9 +24,10 @@ export function NewWatchForm({ phase1bEnabled }: { phase1bEnabled: boolean }) {
   const [form, setForm] = useState<FormValues>(blank);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [savedWatchId, setSavedWatchId] = useState<string | null>(null);
 
   function useDraft(nextDraft: WatchDraft) {
-    setError("");
+    setError(""); setSavedWatchId(null);
     setDraft(nextDraft);
     const { source: _source, ...nextForm } = nextDraft;
     setForm(nextForm);
@@ -76,6 +78,17 @@ export function NewWatchForm({ phase1bEnabled }: { phase1bEnabled: boolean }) {
         setError(data.error ?? "Could not save this watch.");
         return;
       }
+      const photo = fields.get("photo");
+      if (photo instanceof File && photo.size > 0) {
+        const photoForm = new FormData(); photoForm.append("photo", photo);
+        const photoResponse = await fetch(`/api/watches/${data.id}/photo`, { method: "PUT", body: photoForm });
+        if (!photoResponse.ok) {
+          const photoData = await photoResponse.json() as { error?: string };
+          setSavedWatchId(data.id);
+          setError(`Watch saved, but the photo could not be uploaded. ${photoData.error ?? "Open the watch to try again."}`);
+          return;
+        }
+      }
       router.push(`/watches/${data.id}`);
       router.refresh();
     } catch {
@@ -106,6 +119,7 @@ export function NewWatchForm({ phase1bEnabled }: { phase1bEnabled: boolean }) {
           <div className="field"><label htmlFor="modelName">Model name</label><input id="modelName" value={form.modelName} onChange={(event) => update("modelName", event.target.value)} required /></div>
           <div className="field"><label htmlFor="nickname">Nickname <span aria-hidden="true">*</span></label><input id="nickname" value={form.nickname} onChange={(event) => update("nickname", event.target.value)} placeholder="e.g. Panda or Black Sub" minLength={2} maxLength={80} required aria-describedby="nickname-help" /><span id="nickname-help" className="field-hint">Required: this name appears on your dashboard and helps research find alias-based discussion.</span></div>
           <div className="field"><label htmlFor="trackedWatchUrl">Watch URL</label><input id="trackedWatchUrl" name="trackedWatchUrl" type="url" placeholder="https://…" maxLength={2000} aria-describedby="tracked-watch-url-help" /><span id="tracked-watch-url-help" className="field-hint">Optional: save the direct link to the specific watch you are tracking. It is not used by market research.</span></div>
+          <div className="field"><label htmlFor="photo">Watch photo</label><input id="photo" name="photo" type="file" accept="image/avif,image/gif,image/jpeg,image/png,image/webp" aria-describedby="photo-help" /><span id="photo-help" className="field-hint">Optional personal photo. AVIF, JPEG, PNG, WebP, or GIF — up to 5 MB.</span></div>
           <div className="field"><label htmlFor="retailPrice">Retail price (USD)</label><input id="retailPrice" type="number" min="0" value={form.retailPriceUsd ?? ""} onChange={(event) => update("retailPriceUsd", event.target.value ? Number(event.target.value) : null)} /></div>
           <div className="field"><label htmlFor="caseSize">Case size (mm)</label><input id="caseSize" type="number" min="1" value={form.specs.caseSizeMm ?? ""} onChange={(event) => updateSpec("caseSizeMm", event.target.value ? Number(event.target.value) : null)} /></div>
           <div className="field"><label htmlFor="dial">Dial</label><input id="dial" value={form.specs.dial ?? ""} onChange={(event) => updateSpec("dial", event.target.value)} /></div>
@@ -130,7 +144,7 @@ export function NewWatchForm({ phase1bEnabled }: { phase1bEnabled: boolean }) {
           <div className="field wide"><label htmlFor="notes">Notes</label><textarea id="notes" name="notes" placeholder="Personal notes, dial details, or purchase context" /></div>
         </div>
       </section>
-      <div className="form-actions"><button type="submit" disabled={saving}>{saving ? "Saving…" : "Save watch"}</button>{error && <p className="error" role="alert">{error}</p>}</div>
+      <div className="form-actions"><button type="submit" disabled={saving || Boolean(savedWatchId)}>{saving ? "Saving…" : savedWatchId ? "Watch saved" : "Save watch"}</button>{error && <p className="error" role="alert">{error}</p>}{savedWatchId && <Link className="button secondary" href={`/watches/${savedWatchId}`}>Open saved watch</Link>}</div>
     </>}
   </form>;
 }

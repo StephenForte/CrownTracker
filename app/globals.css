@@ -31,6 +31,7 @@ h2 { font-size: 28px; }
 .market-card { min-height: 250px; }
 .market-card-main { color: inherit; display: flex; flex: 1; flex-direction: column; justify-content: space-between; text-decoration: none; }
 .tracked-watch-card-link { align-self: flex-start; margin-top: 14px; font-size: 13px; font-weight: 800; }
+.market-card-photo { aspect-ratio: 16 / 9; border: 1px solid var(--line); border-radius: 10px; margin: 16px 0 0; object-fit: cover; width: 100%; }
 .card-heading, .panel-row, .card-footer, .detail-actions { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .metric-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 22px 0; }
 .metric-pair > div { display: grid; gap: 5px; }
@@ -73,6 +74,9 @@ textarea { min-height: 100px; resize: vertical; }
 .detail-back-link { display: inline-flex; margin: 0; }
 .identity-panel { align-items: center; display: flex; gap: 20px; justify-content: space-between; }
 .identity-panel .muted { margin: 0; max-width: 630px; }
+.personal-watch-editors, .watch-photo-editor { display: grid; gap: 12px; }
+.watch-photo-editor { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 16px; }
+.watch-photo-preview { border: 1px solid var(--line); border-radius: 8px; max-height: 180px; max-width: 280px; object-fit: cover; width: 100%; }
 .inline-editor { display: grid; gap: 10px; min-width: min(100%, 360px); }
 .inline-actions { display: flex; gap: 8px; }
 .checkbox-field { align-items: end; }

@@ -3,7 +3,7 @@ import { getOwnerId } from "@/lib/owner";
 import type { Scope } from "@/lib/watch-schema";
 
 export type { Scope } from "@/lib/watch-schema";
-export type Watch = { id: string; reference_number: string; model_name: string; nickname: string; specs: Record<string, string | number>; scope: Scope; photo_source_url: string | null; tracked_watch_url: string | null; retail_price_usd: string | null; discontinued: boolean; status: "active" | "archived"; notes: string | null; created_at: Date };
+export type Watch = { id: string; reference_number: string; model_name: string; nickname: string; specs: Record<string, string | number>; scope: Scope; photo_mime: string | null; photo_source_url: string | null; tracked_watch_url: string | null; retail_price_usd: string | null; discontinued: boolean; status: "active" | "archived"; notes: string | null; created_at: Date };
 
 export async function getWatches(status?: "active" | "archived") {
   const userId = await getOwnerId();

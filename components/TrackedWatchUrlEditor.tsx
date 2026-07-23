@@ -2,8 +2,9 @@
 
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
+import { WatchPhotoEditor } from "@/components/WatchPhotoEditor";
 
-export function TrackedWatchUrlEditor({ id, trackedWatchUrl }: { id: string; trackedWatchUrl: string | null }) {
+export function TrackedWatchUrlEditor({ id, nickname, trackedWatchUrl }: { id: string; nickname: string; trackedWatchUrl: string | null }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [value, setValue] = useState(trackedWatchUrl ?? "");
@@ -49,7 +50,7 @@ export function TrackedWatchUrlEditor({ id, trackedWatchUrl }: { id: string; tra
     }
   }
 
-  if (!open) return <div className="inline-actions">{trackedWatchUrl && <a className="button secondary" href={trackedWatchUrl} target="_blank" rel="noreferrer">Open tracked watch ↗</a>}<button className="secondary" type="button" onClick={() => setOpen(true)}>{trackedWatchUrl ? "Edit link" : "Add link"}</button></div>;
+  if (!open) return <div className="personal-watch-editors"><div className="inline-actions">{trackedWatchUrl && <a className="button secondary" href={trackedWatchUrl} target="_blank" rel="noreferrer">Open tracked watch ↗</a>}<button className="secondary" type="button" onClick={() => setOpen(true)}>{trackedWatchUrl ? "Edit link" : "Add link"}</button></div><WatchPhotoEditor id={id} nickname={nickname} /></div>;
   return <form className="inline-editor" onSubmit={submit}>
     <div className="field"><label htmlFor="tracked-watch-url">Watch URL</label><input id="tracked-watch-url" type="url" value={value} onChange={(event) => setValue(event.target.value)} placeholder="https://…" maxLength={2000} autoFocus /><span className="field-hint">Optional. Save a direct link to the specific watch you are tracking; it is not used by market research.</span></div>
     <div className="inline-actions"><button type="submit" disabled={saving}>{saving ? "Saving…" : "Save link"}</button><button className="secondary" type="button" onClick={() => { setValue(trackedWatchUrl ?? ""); setError(""); setOpen(false); }}>Cancel</button></div>
