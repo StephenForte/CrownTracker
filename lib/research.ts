@@ -12,6 +12,7 @@ type ListingCandidate = {
   hasPapers: boolean | null; hasBox: boolean | null; warranty: string | null; groundingSnippet: string;
 };
 type StoredListing = ListingCandidate & { priceUsd: number; fxRate: number; scope: { match: ScopeClass; reason: string | null; weight: number } };
+type Discovery = { results: DiscoveryResult[]; queryCount: number; usedBaseReferenceFallback: boolean };
 
 const userAgent = "CrownTracker/1.1 market research (+personal dashboard)";
 const robotsCache = new Map<string, Promise<string | null>>();
@@ -26,8 +27,8 @@ export async function researchWatch(pool: Pool, watch: Watch, runId: string) {
   // 1A cannot ground at listing level.
   const effectiveWatch = phase1b ? watch : { ...watch, scope: { ...watch.scope, yearMin: null, yearMax: null, warranty: "none_ok" as const } };
   const sellers = (await pool.query<Seller>("SELECT id, name, domain FROM sellers WHERE curated = true ORDER BY trust_score DESC")).rows;
-  const discovered = await discoverListings(pool, watch, sellers, phase1b);
-  const allowedResults = discovered.filter((result) => sellerForUrl(result.url, sellers)).slice(0, phase1b ? 32 : 10);
+  const discovery = await discoverListings(pool, watch, sellers, phase1b);
+  const allowedResults = discovery.results.filter((result) => sellerForUrl(result.url, sellers)).slice(0, phase1b ? 32 : 10);
   const fxRates = phase1b ? await getUsdRates() : { USD: 1 };
   let pagesRead = 0, savedListings = 0, scopeMatchedListings = 0, groundingDrops = 0;
   const scopeExclusions = new Map<string, number>();
@@ -65,14 +66,15 @@ export async function researchWatch(pool: Pool, watch: Watch, runId: string) {
 
   const metrics = await createMetrics(pool, watch.id, runId);
   return {
-    discoveryQueries: phase1b ? priceQueryTemplates(watch, sellers).length : 1,
+    discoveryQueries: discovery.queryCount,
     expanded: phase1b, pagesRead, savedListings, scopeMatchedListings, scopeExcludedListings: savedListings - scopeMatchedListings,
-    scopeExclusions: [...scopeExclusions.entries()].map(([reason, count]) => ({ reason, count })), discovered: discovered.length,
+    scopeExclusions: [...scopeExclusions.entries()].map(([reason, count]) => ({ reason, count })), discovered: discovery.results.length,
+    usedBaseReferenceFallback: discovery.usedBaseReferenceFallback,
     groundingDrops, metrics,
   };
 }
 
-async function discoverListings(pool: Pool, watch: Watch, sellers: Seller[], expanded: boolean): Promise<DiscoveryResult[]> {
+async function discoverListings(pool: Pool, watch: Watch, sellers: Seller[], expanded: boolean): Promise<Discovery> {
   const apiKey = process.env.TAVILY_API_KEY;
   if (!apiKey) throw new Error("TAVILY_API_KEY is required for the market-research pipeline.");
   const queries = expanded ? priceQueryTemplates(watch, sellers) : [`Rolex ${watch.reference_number}${watch.nickname ? ` ${watch.nickname}` : ""} for sale`];
@@ -93,7 +95,20 @@ async function discoverListings(pool: Pool, watch: Watch, sellers: Seller[], exp
       unique.set(canonicalUrl(result.url), { url: result.url, title: result.title?.trim() || "Untitled listing" });
     }
   }
-  return [...unique.values()];
+  const hasCuratedResult = [...unique.values()].some((result) => sellerForUrl(result.url, sellers));
+  const fallback = expanded && !hasCuratedResult ? baseReferenceFallbackQuery(watch) : null;
+  if (fallback) {
+    await reserveSearchCredit(pool, 2);
+    const response = await fetch("https://api.tavily.com/search", {
+      method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({ query: fallback, search_depth: "advanced", max_results: 12, include_answer: false, include_domains: sellers.map((seller) => seller.domain) }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!response.ok) throw new Error(`Tavily discovery fallback failed with HTTP ${response.status}.`);
+    const body = await response.json() as { results?: Array<{ url?: string; title?: string }> };
+    for (const result of body.results ?? []) if (result.url && isHttpUrl(result.url)) unique.set(canonicalUrl(result.url), { url: result.url, title: result.title?.trim() || "Untitled listing" });
+  }
+  return { results: [...unique.values()], queryCount: queries.length + (fallback ? 1 : 0), usedBaseReferenceFallback: Boolean(fallback) };
 }
 
 function needsDetailEnrichment(row: ListingCandidate, watch: Watch) {
@@ -104,13 +119,22 @@ function needsDetailEnrichment(row: ListingCandidate, watch: Watch) {
     || ((watch.scope.yearMin !== null || watch.scope.yearMax !== null) && row.productionYear === null);
 }
 
-function priceQueryTemplates(watch: Watch, sellers: Seller[]) {
-  const identity = `Rolex ${watch.reference_number}${watch.nickname ? ` ${watch.nickname}` : ""}`;
-  const rotation = [...sellers].sort((a, b) => stableHash(`${watch.id}:${a.domain}`) - stableHash(`${watch.id}:${b.domain}`)).slice(0, 4);
+export function priceQueryTemplates(watch: Watch, sellers: Seller[]) {
+  const identity = researchIdentity(watch);
+  const rotation = [...sellers].sort((a, b) => stableHash(`${watch.id}:${a.domain}`) - stableHash(`${watch.id}:${b.domain}`)).slice(0, 3);
   return [
-    `${identity} price`, `${identity} for sale`, `${identity} unworn for sale`, `${identity} pre-owned for sale`,
+    `${identity} for sale`, `${identity} asking price`,
     ...rotation.map((seller) => `site:${seller.domain} ${identity} for sale`),
   ];
+}
+
+export function baseReferenceFallbackQuery(watch: Pick<Watch, "reference_number" | "model_name">) {
+  const baseReference = watch.reference_number.split("-")[0];
+  return baseReference !== watch.reference_number ? `Rolex ${baseReference} ${watch.model_name} for sale` : null;
+}
+
+function researchIdentity(watch: Pick<Watch, "reference_number" | "model_name" | "nickname">) {
+  return ["Rolex", watch.reference_number, watch.model_name.replace(/^Rolex\s+/i, ""), watch.nickname].filter(Boolean).join(" ");
 }
 
 async function reserveSearchCredit(pool: Pool, credits: number) {

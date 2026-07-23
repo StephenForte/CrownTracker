@@ -19,7 +19,15 @@ export async function POST(_request: NextRequest, context: { params: Promise<{ i
   try {
     const outcome = await researchWatch(db, watch.rows[0], created.rows[0].id);
     await db.query("UPDATE runs SET status = 'succeeded', finished_at = now(), queries_used = $1 WHERE id = $2", [outcome.discoveryQueries, created.rows[0].id]);
-    return NextResponse.json({ ok: true, expanded: outcome.expanded });
+    return NextResponse.json({ ok: true, expanded: outcome.expanded, outcome: {
+      discovered: outcome.discovered,
+      pagesRead: outcome.pagesRead,
+      savedListings: outcome.savedListings,
+      scopeMatchedListings: outcome.scopeMatchedListings,
+      scopeExcludedListings: outcome.scopeExcludedListings,
+      groundingDrops: outcome.groundingDrops,
+      usedBaseReferenceFallback: outcome.usedBaseReferenceFallback,
+    } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Refresh failed.";
     await db.query("UPDATE runs SET status = 'failed', finished_at = now(), error = $1::jsonb WHERE id = $2", [JSON.stringify({ message }), created.rows[0].id]);

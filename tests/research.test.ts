@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { extractListingRows } from "@/lib/research";
+import { baseReferenceFallbackQuery, extractListingRows, priceQueryTemplates } from "@/lib/research";
+import type { Watch } from "@/lib/watches";
 
 test("extractListingRows extracts products from JSON-LD script tags", () => {
   const html = `<html><head>
@@ -294,4 +295,23 @@ test("extractListingRows preserves grounding snippet", () => {
   const rows = extractListingRows(html, "https://dealer.example/", "Watches");
   assert.ok(rows[0].groundingSnippet.length > 0);
   assert.ok(rows[0].groundingSnippet.includes("Watch Title"));
+});
+
+test("expanded price queries use the exact WatchBase variant and stay within five searches", () => {
+  const watch = { id: "watch-1", reference_number: "126503-0001", model_name: "Rolex Daytona", nickname: "Daytona Stainless Steel - Yellow Gold / White" } as Watch;
+  const sellers = [
+    { id: "one", name: "One", domain: "one.example" },
+    { id: "two", name: "Two", domain: "two.example" },
+    { id: "three", name: "Three", domain: "three.example" },
+    { id: "four", name: "Four", domain: "four.example" },
+  ];
+  const queries = priceQueryTemplates(watch, sellers);
+  assert.equal(queries.length, 5);
+  assert.ok(queries.every((query) => query.includes("126503-0001")));
+  assert.ok(queries.some((query) => query.includes("site:")));
+});
+
+test("base-reference fallback only applies to a subvariant", () => {
+  assert.equal(baseReferenceFallbackQuery({ reference_number: "126503-0001", model_name: "Rolex Daytona" } as Watch), "Rolex 126503 Rolex Daytona for sale");
+  assert.equal(baseReferenceFallbackQuery({ reference_number: "126500LN", model_name: "Rolex Daytona" } as Watch), null);
 });
