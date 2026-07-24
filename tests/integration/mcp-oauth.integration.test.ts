@@ -52,6 +52,8 @@ test("mcp oauth integration: lifecycle, revoke, cleanup, and migration idempoten
   });
 
   await applyMigrations(pool);
+  // DROP DATABASE … WITH (FORCE) can emit late socket errors after pool.end().
+  pool.on("error", () => {});
   await applyMigrations(pool);
 
   process.env.DATABASE_URL = databaseUrl;
