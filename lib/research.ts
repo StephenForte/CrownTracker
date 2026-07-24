@@ -432,7 +432,16 @@ async function flagAnomalies(pool: Pool, watchId: string, grey: number | null, r
   if (!Number.isFinite(floor)) return;
   await pool.query("UPDATE market_listings SET anomaly_flags = CASE WHEN price_usd < $2 THEN ARRAY['price_too_low']::text[] ELSE '{}'::text[] END WHERE watch_id = $1 AND is_active = true", [watchId, floor]);
 }
-function iqrRetained<T extends { value: number }>(rows: T[]) { if (rows.length < 4) return rows; const values = rows.map((row) => row.value).sort((a, b) => a - b), q1 = quantile(values, .25), q3 = quantile(values, .75), iqr = q3 - q1; return rows.filter((row) => row.value >= q1 - 1.5 * iqr && row.value <= q3 + 1.5 * iqr); }
+export function iqrRetained<T extends { value: number }>(rows: T[]) {
+  if (rows.length < 4) return rows;
+  const values = rows.map((row) => row.value).sort((a, b) => a - b);
+  const q1 = quantile(values, .25), q3 = quantile(values, .75), iqr = q3 - q1;
+  // A mode-heavy sample can have zero IQR even when one normal, nearby ask
+  // differs slightly. In that case there is no spread from which to derive an
+  // outlier boundary, so retain the observed in-scope rows.
+  if (iqr === 0) return rows;
+  return rows.filter((row) => row.value >= q1 - 1.5 * iqr && row.value <= q3 + 1.5 * iqr);
+}
 function weightedMedian<T extends { value: number; weight: number }>(rows: T[]) { if (!rows.length) return null; const sorted = [...rows].sort((a, b) => a.value - b.value), total = sorted.reduce((sum, row) => sum + row.weight, 0); let sum = 0; for (const row of sorted) { sum += row.weight; if (sum >= total / 2) return row.value; } return sorted.at(-1)!.value; }
 function interquartileRange(values: number[]) { return values.length ? quantile([...values].sort((a, b) => a - b), .75) - quantile([...values].sort((a, b) => a - b), .25) : null; }
 function quantile(values: number[], p: number) { const index = (values.length - 1) * p, lower = Math.floor(index), upper = Math.ceil(index); return values[lower] + (values[upper] - values[lower]) * (index - lower); }

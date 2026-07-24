@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { baseReferenceFallbackQuery, classifyListingIdentity, extractListingRows, isListingUnavailable, listingPriceSanityReason, priceQueryTemplates } from "@/lib/research";
+import { baseReferenceFallbackQuery, classifyListingIdentity, extractListingRows, iqrRetained, isListingUnavailable, listingPriceSanityReason, priceQueryTemplates } from "@/lib/research";
 import type { Watch } from "@/lib/watches";
 
 test("extractListingRows extracts products from JSON-LD script tags", () => {
@@ -337,4 +337,9 @@ test("letter-suffixed references may use a bare numeric stem only with scoped id
 test("out-of-stock evidence never counts as a current listing", () => {
   assert.equal(isListingUnavailable('{"offers":{"availability":"https://schema.org/OutOfStock"}}'), true);
   assert.equal(isListingUnavailable('{"offers":{"availability":"InStock"}}'), false);
+});
+
+test("IQR filtering retains nearby prices when a mode-heavy sample has zero spread", () => {
+  const rows = [{ value: 15295 }, { value: 15295 }, { value: 15295 }, { value: 15295 }, { value: 15295 }, { value: 15395 }];
+  assert.deepEqual(iqrRetained(rows).map((row) => row.value), [15295, 15295, 15295, 15295, 15295, 15395]);
 });
