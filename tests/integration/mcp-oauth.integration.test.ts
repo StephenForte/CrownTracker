@@ -228,6 +228,8 @@ test("mcp oauth enforces active-client and auth-failure caps under concurrency",
   });
 
   await applyMigrations(pool);
+  // DROP DATABASE … WITH (FORCE) can emit late socket errors after pool.end().
+  pool.on("error", () => {});
   process.env.DATABASE_URL = databaseUrl;
   process.env.MCP_REMOTE_ENABLED = "true";
   process.env.MCP_PUBLIC_BASE_URL = "https://crown-tracker.example";
@@ -295,14 +297,20 @@ test("mcp oauth enforces active-client and auth-failure caps under concurrency",
     0,
   );
 
-  // Concurrent wrong attempts plus one correct password: the correct one must
-  // return ok even if siblings raise the bucket to the failure limit first.
+  // Race one more wrong attempt against a correct password at the failure ceiling.
+  // The correct password must still return ok even if the wrong attempt hits the
+  // limit first under the advisory lock.
   const mixedRequest = new Request("https://crown-tracker.example/oauth/authorize", {
     headers: { "x-forwarded-for": "203.0.113.51" },
   });
+  for (let i = 0; i < MCP_AUTH_FAILURE_LIMIT - 1; i += 1) {
+    assert.equal(
+      await oauth.completeAuthorizationPasswordAttempt(mixedRequest, "wrong-password", "integration-password-123"),
+      "mismatch",
+    );
+  }
   const mixedAttempts = await Promise.all([
-    ...Array.from({ length: MCP_AUTH_FAILURE_LIMIT }, () =>
-      oauth.completeAuthorizationPasswordAttempt(mixedRequest, "wrong-password", "integration-password-123")),
+    oauth.completeAuthorizationPasswordAttempt(mixedRequest, "wrong-password", "integration-password-123"),
     oauth.completeAuthorizationPasswordAttempt(
       mixedRequest,
       "integration-password-123",
