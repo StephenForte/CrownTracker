@@ -1,4 +1,5 @@
 import {
+  authorizationFailureBlocked,
   completeAuthorizationPasswordAttempt,
   createAuthorizationCode,
   MCP_READ_SCOPE,
@@ -10,6 +11,7 @@ import {
   isMcpRemoteEnabled,
   MCP_REFRESH_TOKEN_LIFETIME_SECONDS,
   mcpRemoteUnavailableResponse,
+  passwordsMatch,
 } from "@/lib/mcp-remote";
 
 export const runtime = "nodejs";
@@ -104,13 +106,19 @@ export async function POST(request: Request) {
   if (!isMcpRemoteEnabled()) return mcpRemoteUnavailableResponse();
   const form = await request.formData();
   try {
+    const expected = process.env.APP_PASSWORD ?? "";
+    const provided = String(form.get("password") ?? "");
+    // Blocked IPs must get 429 before validation/consent work. Skip only when the
+    // password is already correct so an owner can still clear cooldown (see
+    // completeAuthorizationPasswordAttempt).
+    if (!(expected && passwordsMatch(provided, expected)) && await authorizationFailureBlocked(request)) {
+      return errorPage("temporarily_unavailable", "Too many failed authorization attempts. Try again later.", 429);
+    }
     const authorization = await validateAuthorizationRequest(asSearchParams(form));
     if ("error" in authorization) return errorPage(authorization.error, authorization.description);
     if (String(form.get("confirm_destination") ?? "") !== "1") {
       return formPage(authorization, "Confirm the exact redirect destination before continuing.");
     }
-    const expected = process.env.APP_PASSWORD ?? "";
-    const provided = String(form.get("password") ?? "");
     const passwordAttempt = await completeAuthorizationPasswordAttempt(request, provided, expected);
     if (passwordAttempt === "blocked") {
       return errorPage("temporarily_unavailable", "Too many failed authorization attempts. Try again later.", 429);

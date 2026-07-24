@@ -320,6 +320,90 @@ test("mcp oauth enforces active-client and auth-failure caps under concurrency",
   assert.equal(mixedAttempts.filter((result) => result === "ok").length, 1);
 });
 
+test("blocked authorize POST returns 429 before validation or consent errors", async (t) => {
+  const integrationDb = `crown_tracker_mcp_authz_429_${randomBytes(4).toString("hex")}`;
+  const bootstrap = new Pool({ connectionString: adminUrl });
+  await bootstrap.query(`CREATE DATABASE ${integrationDb}`);
+  const databaseUrl = `${adminUrl.replace(/\/[^/?]+(\?|$)/, `/${integrationDb}$1`)}`;
+  const pool = new Pool({ connectionString: databaseUrl });
+
+  t.after(async () => {
+    const oauth = await import("@/lib/mcp-oauth");
+    oauth.setMcpOAuthDbForTests(null);
+    await pool.end();
+    await bootstrap.query(`DROP DATABASE IF EXISTS ${integrationDb} WITH (FORCE)`);
+    await bootstrap.end();
+  });
+
+  await applyMigrations(pool);
+  pool.on("error", () => {});
+  process.env.DATABASE_URL = databaseUrl;
+  process.env.MCP_REMOTE_ENABLED = "true";
+  process.env.MCP_PUBLIC_BASE_URL = "https://crown-tracker.example";
+  process.env.MCP_DATABASE_URL = databaseUrl;
+  process.env.APP_PASSWORD = "integration-password-123";
+
+  const oauth = await import("@/lib/mcp-oauth");
+  const { MCP_AUTH_FAILURE_LIMIT } = await import("@/lib/mcp-remote");
+  oauth.setMcpOAuthDbForTests(pool);
+
+  const registered = await oauth.registerPublicClient({
+    redirectUris: ["https://claude.ai/api/mcp/auth_callback"],
+    clientName: "Claude",
+  });
+  assert.ok(!("error" in registered));
+  const { challenge } = pkce();
+  const blockedIp = "203.0.113.60";
+  const authRequest = new Request("https://crown-tracker.example/oauth/authorize", {
+    headers: { "x-forwarded-for": blockedIp },
+  });
+  for (let i = 0; i < MCP_AUTH_FAILURE_LIMIT; i += 1) {
+    assert.equal(
+      await oauth.completeAuthorizationPasswordAttempt(authRequest, "wrong-password", "integration-password-123"),
+      "mismatch",
+    );
+  }
+  assert.equal(await oauth.authorizationFailureBlocked(authRequest), true);
+
+  const { POST } = await import("@/app/oauth/authorize/route");
+
+  const invalidParams = await POST(new Request("https://crown-tracker.example/oauth/authorize", {
+    method: "POST",
+    headers: { "x-forwarded-for": blockedIp, "content-type": "application/x-www-form-urlencoded" },
+    body: "client_id=missing&password=wrong",
+  }));
+  assert.equal(invalidParams.status, 429);
+  assert.match(await invalidParams.text(), /Too many failed authorization attempts/);
+
+  const validBody = new URLSearchParams({
+    response_type: "code",
+    client_id: registered.client_id,
+    redirect_uri: "https://claude.ai/api/mcp/auth_callback",
+    code_challenge: challenge,
+    code_challenge_method: "S256",
+    scope: "crowntracker.read",
+    resource: "https://crown-tracker.example/mcp",
+    password: "wrong-password",
+  });
+  const missingConfirm = await POST(new Request("https://crown-tracker.example/oauth/authorize", {
+    method: "POST",
+    headers: { "x-forwarded-for": blockedIp, "content-type": "application/x-www-form-urlencoded" },
+    body: validBody.toString(),
+  }));
+  assert.equal(missingConfirm.status, 429);
+
+  validBody.set("confirm_destination", "1");
+  validBody.set("password", "integration-password-123");
+  const allowed = await POST(new Request("https://crown-tracker.example/oauth/authorize", {
+    method: "POST",
+    headers: { "x-forwarded-for": blockedIp, "content-type": "application/x-www-form-urlencoded" },
+    body: validBody.toString(),
+  }));
+  assert.equal(allowed.status, 303);
+  assert.match(allowed.headers.get("location") ?? "", /code=/);
+  assert.equal(await oauth.authorizationFailureBlocked(authRequest), false);
+});
+
 test("mcp oauth migration applies on a fresh schema and reruns cleanly", async (t) => {
   const bootstrap = new Pool({ connectionString: adminUrl });
   const dbName = `crown_tracker_mcp_mig_${randomBytes(4).toString("hex")}`;
