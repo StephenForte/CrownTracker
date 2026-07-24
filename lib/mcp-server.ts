@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
 import { db } from "@/lib/db";
-import { getActiveWatchMetrics } from "@/lib/active-watch-metrics";
+import { getActiveWatchMetrics, type DatabaseReader } from "@/lib/active-watch-metrics";
 
 const freshnessSchema = z.object({
   label: z.string(),
@@ -17,8 +17,8 @@ const priceMetricSchema = z.object({
   freshness: freshnessSchema,
 });
 
-/** Creates a fresh, stateless server for each Streamable HTTP request. */
-export function createMetricsMcpServer() {
+/** Creates a fresh, stateless server for each Streamable HTTP or stdio session. */
+export function createMetricsMcpServer(reader: DatabaseReader = db) {
   const server = new McpServer({
     name: "crown-tracker-metrics",
     version: "0.1.0",
@@ -54,7 +54,7 @@ export function createMetricsMcpServer() {
     },
   }, async () => {
     try {
-      const watches = await getActiveWatchMetrics(db);
+      const watches = await getActiveWatchMetrics(reader);
       const result = {
         generatedAt: new Date().toISOString(),
         activeWatchCount: watches.length,

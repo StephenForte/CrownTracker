@@ -1,4 +1,5 @@
 import { exchangeAuthorizationCode, refreshAccessToken } from "@/lib/mcp-oauth";
+import { isMcpRemoteEnabled, mcpRemoteUnavailableResponse } from "@/lib/mcp-remote";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -8,6 +9,7 @@ function errorResponse(error: string, description: string, status = 400) {
 }
 
 export async function POST(request: Request) {
+  if (!isMcpRemoteEnabled()) return mcpRemoteUnavailableResponse();
   const contentType = request.headers.get("content-type") ?? "";
   if (!contentType.includes("application/x-www-form-urlencoded")) return errorResponse("invalid_request", "The token endpoint requires form-encoded input.");
   const form = await request.formData();

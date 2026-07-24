@@ -21,6 +21,7 @@ Single-user Rolex market-tracking dashboard. It provides password-based access, 
 
    The `DATABASE_URL` in `.env.local` should remain `postgresql://localhost:5432/crown_tracker`.
 4. Run `npm install`, then `npm run db:migrate` and `npm run dev`.
+5. `npm test` runs the default unit suite. OAuth/MCP Postgres coverage is separate: `npm run test:integration` (requires a local disposable-capable `DATABASE_URL`).
 
 To run the Phase 1A-safe daily research job locally, add `TAVILY_API_KEY` to `.env.local`, then run:
 
@@ -40,11 +41,41 @@ The bundled personal plugin points CoWork at this repository's `tsx` runtime and
 
 ## Remote Claude and Cowork connector
 
-For Claude, Cowork, or Claude Desktop to call CrownTracker over the internet, deploy the web service with `MCP_PUBLIC_BASE_URL` set to its canonical HTTPS URL, for example `https://crown-tracker.onrender.com` (no trailing slash). The pre-deploy migration creates the OAuth client, authorization-code, and hashed-token tables. The public MCP endpoint is then `https://crown-tracker.onrender.com/mcp`.
+Remote MCP is **off by default**. Enable it only when you deliberately set all three:
 
-This endpoint is deliberately read-only. It exposes only `get_active_watch_metrics`, returns the same active-watch snapshot metrics as the dashboard, and never refreshes research or calls Tavily, Anthropic, or WatchBase. OAuth uses the app's existing single-owner `APP_PASSWORD` as the authorization screen, requires PKCE, registers public clients dynamically, issues one-hour access tokens with rotating refresh tokens, and grants only the `crowntracker.read` scope. Do not share `APP_PASSWORD` or put it in Claude; enter it only on the CrownTracker authorization page opened during the connector setup.
+1. `MCP_REMOTE_ENABLED=true`
+2. `MCP_PUBLIC_BASE_URL` — canonical public HTTPS URL with no trailing slash (for example `https://crown-tracker.onrender.com`)
+3. `MCP_DATABASE_URL` — least-privilege Postgres URL for the remote MCP runtime
 
-After deployment, in Claude choose **Customize → Connectors → Add custom connector**, name it “CrownTracker Metrics,” and enter the `/mcp` URL. Claude discovers `/.well-known/oauth-protected-resource/mcp` and `/.well-known/oauth-authorization-server`, registers a public OAuth client, then opens the CrownTracker approval page. Enable the connector for a chat and ask it to report active watches, stale values, or low-confidence metrics. Before adding it to Claude, confirm `GET /mcp` returns `401` with a `WWW-Authenticate` header and the protected-resource metadata endpoint returns JSON. The connector needs a publicly reachable Render URL; local `localhost` cannot be reached by Claude’s cloud connector.
+Local stdio MCP (`npm run mcp:metrics`) is unchanged and does not use these flags.
+
+### Provision the read-only database role
+
+As a privileged database user (local `ubuntu` / Render admin), after migrations:
+
+```bash
+npm run mcp:provision-readonly
+```
+
+That creates `crown_tracker_mcp` with SELECT-only rights on the active-watch metric columns and hashed OAuth access tokens. Put the printed URL in `MCP_DATABASE_URL`. The remote `/mcp` handler fails closed if this URL is missing while remote MCP is enabled. The app’s normal `DATABASE_URL` continues to administer registration, consent, and revocation.
+
+### Authorization and revocation
+
+The public MCP endpoint is deliberately read-only. It exposes only `get_active_watch_metrics`, returns the same active-watch snapshot metrics as the dashboard, and never refreshes research or calls Tavily, Anthropic, or WatchBase. OAuth uses authorization-code + S256 PKCE, dynamic public client registration (rate-limited and capped), one-hour access tokens, rotating 30-day refresh tokens, and the single `crowntracker.read` scope. The consent page shows the connector name and exact redirect origin; you must confirm that destination before entering `APP_PASSWORD`. Do not share `APP_PASSWORD` or put it in Claude.
+
+**Changing `APP_PASSWORD` does not revoke tokens.** Use **Connectors** in the authenticated app to revoke one client or all clients; revocation invalidates every access and refresh token for that client immediately.
+
+Expired/consumed codes, revoked or expired tokens, idle clients, and stale rate-limit rows are removed by the daily `npm run mcp:oauth-cleanup` cron (no paid providers).
+
+### Enable on Render
+
+1. Deploy with `MCP_REMOTE_ENABLED=false` and confirm `/mcp`, `/oauth/*`, and OAuth metadata routes return `404` with no OAuth writes.
+2. Run `npm run mcp:provision-readonly` against the Render database (or an admin connection), set `MCP_DATABASE_URL`, and set `MCP_PUBLIC_BASE_URL`.
+3. Set `MCP_REMOTE_ENABLED=true` only after verifying the Connectors page and cleanup cron.
+4. In Claude choose **Customize → Connectors → Add custom connector**, name it “CrownTracker Metrics,” and enter the `/mcp` URL. Claude discovers OAuth metadata, registers a public client, and opens the CrownTracker approval page.
+5. Confirm `GET /mcp` returns `401` with `WWW-Authenticate` when called without a bearer token. The connector needs a publicly reachable URL; local `localhost` cannot be reached by Claude’s cloud connector.
+
+Staging checklist: complete one real PKCE flow, confirm consent wording and tool output, revoke from Connectors, confirm token/replay rejection, run cleanup, and verify logs never contain passwords, codes, or tokens.
 
 ## Phase 1 market research
 
