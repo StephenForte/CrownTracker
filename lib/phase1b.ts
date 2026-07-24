@@ -7,6 +7,7 @@ export const DAILY_MANUAL_REFRESH_LIMIT = 5;
 export const PRICE_STALE_AFTER_HOURS = 48;
 export const PRICE_OUTDATED_AFTER_HOURS = 96;
 export const ACTIVE_LISTING_WINDOW_DAYS = 14;
+export const MIN_CONFIRMED_LISTINGS_FOR_PRICE = 3;
 
 /**
  * Phase 1B changes the network, provider-cost, and data-quality contract. It
@@ -39,6 +40,16 @@ export function phase1aScopeError(scope: Scope) {
 }
 
 export type Confidence = "high" | "medium" | "low" | "insufficient";
+export type PriceReliabilityStatus = "verified" | "provisional" | "withheld" | "gathering";
+
+export function priceReliability(value: string | number | null | undefined, confirmed: number, uncertain: number) {
+  if (confirmed === 0 && uncertain > 0) return { status: "withheld" as const, eligibleForComparison: false, reason: `No confirmed in-scope listings; ${uncertain} uncertain listing${uncertain === 1 ? "" : "s"} retained for review.` };
+  if (confirmed === 0) return { status: "gathering" as const, eligibleForComparison: false, reason: "No usable price estimate yet." };
+  if (confirmed < MIN_CONFIRMED_LISTINGS_FOR_PRICE) return { status: "provisional" as const, eligibleForComparison: false, reason: `${confirmed} confirmed listing${confirmed === 1 ? "" : "s"} is below the ${MIN_CONFIRMED_LISTINGS_FOR_PRICE}-listing minimum.` };
+  if (uncertain > confirmed) return { status: "provisional" as const, eligibleForComparison: false, reason: `${uncertain} uncertain listings outweigh ${confirmed} confirmed listings.` };
+  if (value === null || value === undefined) return { status: "gathering" as const, eligibleForComparison: false, reason: "No usable price estimate yet." };
+  return { status: "verified" as const, eligibleForComparison: true, reason: null };
+}
 
 export function confidenceFor(sample: number, diversity: number, agreement: number, hasValue = true): Confidence {
   if (!hasValue) return "insufficient";

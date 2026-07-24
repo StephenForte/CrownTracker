@@ -9,7 +9,7 @@ import { RefreshButton } from "@/components/RefreshButton";
 import { NicknameEditor } from "@/components/NicknameEditor";
 import { TrackedWatchUrlEditor } from "@/components/TrackedWatchUrlEditor";
 import { getMarketDetails, type Evidence, type MarketListing, type MetricSnapshot } from "@/lib/market";
-import { freshness, isPhase1bEnabled, trustBucket } from "@/lib/phase1b";
+import { freshness, isPhase1bEnabled, priceReliability, trustBucket } from "@/lib/phase1b";
 import { emailAlertsEnabled, getWatchAlert } from "@/lib/alerts";
 import { db } from "@/lib/db";
 import { AlertEditor } from "@/components/AlertEditor";
@@ -30,7 +30,8 @@ function EvidenceItems({ evidence }: { evidence: Evidence[] }) {
 
 function MetricPanel({ title, snapshot, ma, evidence }: { title: string; snapshot?: MetricSnapshot; ma?: { value: string | null; weeks: number; hasFullYear: boolean; backfillCount: number }; evidence: Evidence[] }) {
   const age = freshness(snapshot?.computed_at);
-  return <section className={`panel metric-panel ${age.state}`}><div className="panel-row"><div className="eyebrow">{title}</div>{snapshot && <span className={`freshness ${age.state}`}>{age.label}</span>}</div><h2>{money(snapshot?.value)}</h2>{snapshot ? <><p className="muted">{snapshot.n} in scope{snapshot.n_uncertain ? ` + ${snapshot.n_uncertain} uncertain` : ""} · <b>{snapshot.confidence}</b> confidence</p><p className="metric-subline">{ma?.value ? `${ma.hasFullYear ? "52" : ma.weeks}-wk avg${ma.hasFullYear ? "" : " (partial)"}: ${money(ma.value)}` : "Moving average starts with the first verified observation."}</p><details className="provenance"><summary>Why this number?</summary><p>Median after IQR outlier removal ({snapshot.outliers_dropped} dropped). Confidence: sample {Math.round(snapshot.conf_sample * 100)}%, source diversity {Math.round(snapshot.conf_diversity * 100)}%, agreement {Math.round(snapshot.conf_agreement * 100)}%.</p>{evidence.length ? <EvidenceItems evidence={evidence} /> : <p>No retained evidence is available for this run.</p>}</details></> : <p className="muted">Refresh this watch to collect grounded listing rows.</p>}</section>;
+  const reliability = priceReliability(snapshot?.value, snapshot?.n ?? 0, snapshot?.n_uncertain ?? 0);
+  return <section className={`panel metric-panel ${age.state}`}><div className="panel-row"><div className="eyebrow">{title}</div>{snapshot && <span className={`freshness ${age.state}`}>{age.label}</span>}</div><h2>{reliability.eligibleForComparison ? money(snapshot?.value) : reliability.status === "gathering" ? "Gathering" : "Not comparable"}</h2>{snapshot ? <><p className="muted">{snapshot.n} confirmed{snapshot.n_uncertain ? ` + ${snapshot.n_uncertain} uncertain` : ""} · <b>{reliability.status}</b></p><p className="metric-subline">{reliability.eligibleForComparison ? (ma?.value ? `${ma.hasFullYear ? "52" : ma.weeks}-wk avg${ma.hasFullYear ? "" : " (partial)"}: ${money(ma.value)}` : "Moving average starts with the first verified observation.") : reliability.reason}</p><details className="provenance"><summary>Why this number?</summary><p>Median after IQR outlier removal ({snapshot.outliers_dropped} dropped). Confidence: sample {Math.round(snapshot.conf_sample * 100)}%, source diversity {Math.round(snapshot.conf_diversity * 100)}%, agreement {Math.round(snapshot.conf_agreement * 100)}%.</p>{evidence.length ? <EvidenceItems evidence={evidence} /> : <p>No retained evidence is available for this run.</p>}</details></> : <p className="muted">Refresh this watch to collect grounded listing rows.</p>}</section>;
 }
 
 function EvidenceList({ evidence }: { evidence: Evidence[] }) {
@@ -221,7 +222,7 @@ export default async function WatchDetailPage({ params }: { params: Promise<{ id
               <div className="panel-row">
                 <div>
                   <div className="eyebrow">Email price alerts</div>
-                  <p className="muted">Thresholds apply to asking-price estimates only. Emails are sent after a scheduled run when a price newly crosses a threshold.</p>
+                  <p className="muted">Thresholds apply only to verified asking-price estimates. Emails are sent after a scheduled run when a price newly crosses a threshold.</p>
                 </div>
                 <AlertEditor id={watch.id} alert={alert} deliveryEnabled={emailAlertsEnabled()} />
               </div>
@@ -235,6 +236,7 @@ export default async function WatchDetailPage({ params }: { params: Promise<{ id
                 <span className="chip">{watch.scope.warranty.replaceAll("_", " ")}</span>
                 {watch.scope.yearMin && <span className="chip">from {watch.scope.yearMin}</span>}
                 {watch.scope.yearMax && <span className="chip">to {watch.scope.yearMax}</span>}
+                {watch.scope.identityTerms.map((term) => <span className="chip" key={term}>requires {term}</span>)}
               </div>
               <ScopeEditor id={watch.id} scope={watch.scope} phase1bEnabled={phase1bEnabled} />
               {market.scopeChanges.length > 0 && (

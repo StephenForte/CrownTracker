@@ -1,5 +1,5 @@
 import type { Pool } from "pg";
-import { PRICE_OUTDATED_AFTER_HOURS, PRICE_STALE_AFTER_HOURS } from "@/lib/phase1b";
+import { PRICE_OUTDATED_AFTER_HOURS, PRICE_STALE_AFTER_HOURS, priceReliability } from "@/lib/phase1b";
 
 export type WatchAlert = { watch_id: string; grey_above: string | null; grey_below: string | null; resell_above: string | null; resell_below: string | null };
 export type BudgetStatus = { used: number; cap: number | null; percentage: number | null; state: "normal" | "warning" | "paused" | "unconfigured" };
@@ -63,15 +63,19 @@ export async function evaluateEmailAlerts(pool: Pool) {
     }
   };
 
-  const thresholds = await pool.query<WatchAlert & { nickname: string; reference_number: string; grey_value: string | null; resell_value: string | null }>(
+  const thresholds = await pool.query<WatchAlert & { nickname: string; reference_number: string; grey_value: string | null; grey_n: number | null; grey_n_uncertain: number | null; resell_value: string | null; resell_n: number | null; resell_n_uncertain: number | null }>(
     `SELECT a.*, w.nickname, w.reference_number,
-       (SELECT value FROM metric_snapshots WHERE watch_id = w.id AND metric = 'grey_avg' AND value IS NOT NULL ORDER BY computed_at DESC LIMIT 1) AS grey_value,
-       (SELECT value FROM metric_snapshots WHERE watch_id = w.id AND metric = 'resell_avg' AND value IS NOT NULL ORDER BY computed_at DESC LIMIT 1) AS resell_value
+       (SELECT value FROM metric_snapshots WHERE watch_id = w.id AND metric = 'grey_avg' ORDER BY computed_at DESC LIMIT 1) AS grey_value,
+       (SELECT n FROM metric_snapshots WHERE watch_id = w.id AND metric = 'grey_avg' ORDER BY computed_at DESC LIMIT 1) AS grey_n,
+       (SELECT n_uncertain FROM metric_snapshots WHERE watch_id = w.id AND metric = 'grey_avg' ORDER BY computed_at DESC LIMIT 1) AS grey_n_uncertain,
+       (SELECT value FROM metric_snapshots WHERE watch_id = w.id AND metric = 'resell_avg' ORDER BY computed_at DESC LIMIT 1) AS resell_value,
+       (SELECT n FROM metric_snapshots WHERE watch_id = w.id AND metric = 'resell_avg' ORDER BY computed_at DESC LIMIT 1) AS resell_n,
+       (SELECT n_uncertain FROM metric_snapshots WHERE watch_id = w.id AND metric = 'resell_avg' ORDER BY computed_at DESC LIMIT 1) AS resell_n_uncertain
      FROM watch_alerts a JOIN watches w ON w.id = a.watch_id WHERE w.status = 'active'`,
   );
   for (const alert of thresholds.rows) {
-    await checkPriceThresholds(deliver, alert, "grey", alert.grey_value, alert.grey_above, alert.grey_below);
-    await checkPriceThresholds(deliver, alert, "resell", alert.resell_value, alert.resell_above, alert.resell_below);
+    await checkPriceThresholds(deliver, alert, "grey", alert.grey_value, alert.grey_n, alert.grey_n_uncertain, alert.grey_above, alert.grey_below);
+    await checkPriceThresholds(deliver, alert, "resell", alert.resell_value, alert.resell_n, alert.resell_n_uncertain, alert.resell_above, alert.resell_below);
   }
 
   const stale = await pool.query<{ id: string; nickname: string; reference_number: string; computed_at: Date | null }>(
@@ -97,9 +101,14 @@ export async function evaluateEmailAlerts(pool: Pool) {
 
 type AlertInput = { key: string; watchId: string | null; kind: "price_threshold" | "staleness" | "budget"; state: "normal" | "above" | "below" | "stale" | "outdated" | "warning" | "paused"; subject: string; text: string; detail: Record<string, unknown> };
 
-async function checkPriceThresholds(deliver: (input: AlertInput) => Promise<void>, alert: WatchAlert & { nickname: string; reference_number: string }, metric: "grey" | "resell", valueRaw: string | null, aboveRaw: string | null, belowRaw: string | null) {
+async function checkPriceThresholds(deliver: (input: AlertInput) => Promise<void>, alert: WatchAlert & { nickname: string; reference_number: string }, metric: "grey" | "resell", valueRaw: string | null, confirmed: number | null, uncertain: number | null, aboveRaw: string | null, belowRaw: string | null) {
   const value = Number(valueRaw), above = Number(aboveRaw), below = Number(belowRaw);
-  if (!Number.isFinite(value)) return;
+  const reliability = priceReliability(Number.isFinite(value) ? value : null, confirmed ?? 0, uncertain ?? 0);
+  if (!Number.isFinite(value) || !reliability.eligibleForComparison) {
+    if (Number.isFinite(above)) await deliver({ key: `price:${alert.watch_id}:${metric}:above`, watchId: alert.watch_id, kind: "price_threshold", state: "normal", subject: "", text: "", detail: { metric, withheld: true, reason: reliability.reason } });
+    if (Number.isFinite(below)) await deliver({ key: `price:${alert.watch_id}:${metric}:below`, watchId: alert.watch_id, kind: "price_threshold", state: "normal", subject: "", text: "", detail: { metric, withheld: true, reason: reliability.reason } });
+    return;
+  }
   const label = metric === "grey" ? "grey asking" : "resell asking";
   if (Number.isFinite(above)) await deliver({ key: `price:${alert.watch_id}:${metric}:above`, watchId: alert.watch_id, kind: "price_threshold", state: value >= above ? "above" : "normal", subject: `Crown Tracker: ${alert.nickname} ${label} is above your threshold`, text: `${alert.reference_number} (${alert.nickname}) has a current ${label} estimate of ${formatMoney(value)}, above your ${formatMoney(above)} threshold. Asking-price estimate only; it is not a sale price.`, detail: { metric, direction: "above", value, threshold: above } });
   if (Number.isFinite(below)) await deliver({ key: `price:${alert.watch_id}:${metric}:below`, watchId: alert.watch_id, kind: "price_threshold", state: value <= below ? "below" : "normal", subject: `Crown Tracker: ${alert.nickname} ${label} is below your threshold`, text: `${alert.reference_number} (${alert.nickname}) has a current ${label} estimate of ${formatMoney(value)}, below your ${formatMoney(below)} threshold. Asking-price estimate only; it is not a sale price.`, detail: { metric, direction: "below", value, threshold: below } });

@@ -35,7 +35,7 @@ The login is intentionally a single env-var password for this one-user app. It i
 
 ## CoWork metrics MCP
 
-`npm run mcp:metrics` starts a local stdio MCP server for a CoWork job. Its one read-only tool, `get_active_watch_metrics`, returns all active watches with the latest grey and resell **asking-price** estimates, availability, sample sizes, confidence, and freshness. It reads the same Postgres snapshots as the dashboard; it does not refresh research or call Tavily, Anthropic, or WatchBase.
+`npm run mcp:metrics` starts a local stdio MCP server for a CoWork job. Its one read-only tool, `get_active_watch_metrics`, returns all active watches with the latest grey and resell **asking-price** estimates, availability, sample sizes, confidence, freshness, and an explicit comparison-eligibility status. It reads the same Postgres snapshots as the dashboard; it does not refresh research or call Tavily, Anthropic, or WatchBase. Treat a price as comparable only when `eligibleForComparison` is true.
 
 The bundled personal plugin points CoWork at this repository's `tsx` runtime and loads `.env.local` before it opens the database. Keep the plugin local to the machine that has the CrownTracker database and dependencies. In a job, ask: “Use CrownTracker Metrics to report the active watches and their current metrics.” Missing metrics are returned as `null` / `Gathering`, never as zero.
 
@@ -85,7 +85,9 @@ Each daily job discovers pages only on curated seller domains and checks the des
 
 Production-year limits are intentionally available only with Phase 1B. The UI and API hide/reject them in Phase 1A because that tier cannot reliably ground a listing's production year. Phase 1B already extracts a row-level year and, when needed, confirms it from a robots-permitted detail page before applying the saved year range; unknown years stay in the uncertain bucket rather than being treated as matches or exclusions.
 
-The dashboard separates **Avg asking (grey)** (unworn) from **Avg asking (resell)** (pre-owned), applies IQR outlier removal before a weighted median, and surfaces confidence, staleness, evidence, availability, and curated-seller trust. Asking prices are not transaction prices.
+The dashboard separates **Avg asking (grey)** (unworn) from **Avg asking (resell)** (pre-owned), applies IQR outlier removal before a confirmed-listing median, and surfaces confidence, staleness, evidence, availability, and curated-seller trust. An uncertain row is retained as evidence but never sets the headline price. A price is comparable only with at least three confirmed listings and no larger uncertain pool; otherwise it is labeled provisional or withheld and cannot trigger an alert, mover, moving average, or retail-premium/discount claim. Asking prices are not transaction prices.
+
+Every retained listing must ground the tracked exact reference. Listings identified as watch parts or accessories are excluded, and a watch can have optional comma-separated **required listing identity terms** (for example, `factory baguette`) to constrain a specific factory configuration. These terms are market-research scope, not personal notes; changing them reclassifies current rows on the next scan while preserving append-only history.
 
 ## Phase 2 judgment layer
 

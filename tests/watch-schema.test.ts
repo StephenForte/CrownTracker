@@ -9,6 +9,7 @@ const baseScope: Scope = {
   papers: "not_required",
   box: "not_required",
   warranty: "none_ok",
+  identityTerms: [],
 };
 
 test("hasValidYearRange returns true when both yearMin and yearMax are null", () => {

@@ -7,6 +7,7 @@ export const scopeSchema = z.object({
   papers: z.enum(["required", "not_required"]),
   box: z.enum(["required", "not_required"]),
   warranty: z.enum(["factory_remaining", "third_party_ok", "none_ok"]),
+  identityTerms: z.array(z.string().trim().min(2).max(60)).max(5).default([]),
 });
 
 export type Scope = z.infer<typeof scopeSchema>;

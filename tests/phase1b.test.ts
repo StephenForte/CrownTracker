@@ -6,11 +6,24 @@ import {
   trustBucket,
   PRICE_STALE_AFTER_HOURS,
   PRICE_OUTDATED_AFTER_HOURS,
+  priceReliability,
 } from "@/lib/phase1b";
 
 test("confidenceFor returns 'insufficient' when hasValue is false", () => {
   assert.equal(confidenceFor(1, 1, 1, false), "insufficient");
   assert.equal(confidenceFor(0.9, 0.9, 0.9, false), "insufficient");
+});
+
+test("priceReliability withholds zero-confirmed and thin or contaminated readings", () => {
+  assert.deepEqual(priceReliability(null, 0, 4), {
+    status: "withheld",
+    eligibleForComparison: false,
+    reason: "No confirmed in-scope listings; 4 uncertain listings retained for review.",
+  });
+  assert.equal(priceReliability(50950, 2, 0).status, "provisional");
+  assert.equal(priceReliability(null, 2, 0).status, "provisional");
+  assert.equal(priceReliability(27995, 2, 41).eligibleForComparison, false);
+  assert.equal(priceReliability(9500, 6, 1).status, "verified");
 });
 
 test("confidenceFor returns 'high' for strong metrics", () => {

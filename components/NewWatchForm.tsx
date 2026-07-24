@@ -68,6 +68,7 @@ export function NewWatchForm({ phase1bEnabled }: { phase1bEnabled: boolean }) {
         papers: String(fields.get("papers")),
         box: String(fields.get("box")),
         warranty: phase1bEnabled ? String(fields.get("warranty")) : "none_ok",
+        identityTerms: String(fields.get("identityTerms") ?? "").split(",").map((term) => term.trim()).filter(Boolean),
       },
       notes: String(fields.get("notes") ?? ""),
     };
@@ -141,6 +142,7 @@ export function NewWatchForm({ phase1bEnabled }: { phase1bEnabled: boolean }) {
           <div className="field"><label htmlFor="yearMax">Production year, to</label><input id="yearMax" name="yearMax" type="number" min="1900" max="2100" /></div></>}
           <div className="field"><label htmlFor="box">Box</label><select id="box" name="box" defaultValue="not_required"><option value="not_required">Not required</option><option value="required">Required</option></select></div>
           {phase1bEnabled && <div className="field"><label htmlFor="warranty">Warranty</label><select id="warranty" name="warranty" defaultValue="none_ok"><option value="factory_remaining">Factory warranty required</option><option value="third_party_ok">Factory or third-party accepted</option><option value="none_ok">No warranty requirement</option></select></div>}
+          <div className="field wide"><label htmlFor="identityTerms">Required listing identity terms</label><input id="identityTerms" name="identityTerms" placeholder="e.g. factory baguette, grey dial" maxLength={300} /><span className="field-hint">Optional comma-separated terms that must be present in listing evidence. The exact reference is always required; use this for a specific factory configuration.</span></div>
           <div className="field wide"><label htmlFor="notes">Notes</label><textarea id="notes" name="notes" placeholder="Personal notes, dial details, or purchase context" /></div>
         </div>
       </section>

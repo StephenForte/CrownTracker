@@ -15,6 +15,9 @@ const priceMetricSchema = z.object({
   confidence: z.enum(["high", "medium", "low", "insufficient"]).nullable(),
   computedAt: z.string().datetime().nullable(),
   freshness: freshnessSchema,
+  reliabilityStatus: z.enum(["verified", "provisional", "withheld", "gathering"]),
+  eligibleForComparison: z.boolean(),
+  withholdReason: z.string().nullable(),
 });
 
 /** Creates a fresh, stateless server for each Streamable HTTP or stdio session. */
@@ -61,7 +64,7 @@ export function createMetricsMcpServer(reader: DatabaseReader = db) {
         watches,
         notes: [
           "Grey and resell figures are asking-price estimates, not sold-price or transaction data.",
-          "Sample size, uncertain sample size, confidence, and freshness should be considered before comparing watches.",
+          "Compare a price only when eligibleForComparison is true. Provisional and withheld readings must not be used for retail-premium or discount claims.",
         ],
       };
       return {

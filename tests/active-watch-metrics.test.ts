@@ -38,7 +38,12 @@ test("maps active-watch metrics without claiming missing research exists", () =>
     confidence: null,
     computedAt: null,
     freshness: { label: "Gathering", state: "gathering" },
+    reliabilityStatus: "gathering",
+    eligibleForComparison: false,
+    withholdReason: "No usable price estimate yet.",
   });
+  assert.equal(watch.greyAsking.reliabilityStatus, "verified");
+  assert.equal(watch.greyAsking.eligibleForComparison, true);
 });
 
 test("queries active watches only", async () => {

@@ -10,6 +10,7 @@ const phase1aScope = {
   papers: "required" as const,
   box: "not_required" as const,
   warranty: "none_ok" as const,
+  identityTerms: [],
 };
 
 test("Phase 1B requires an explicit flag and both paid-provider prerequisites", () => {

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Pool } from "pg";
 import type { Watch } from "@/lib/watches";
-import { ACTIVE_LISTING_WINDOW_DAYS, UNCERTAIN_LISTING_WEIGHT, confidenceFor, isPhase1bEnabled, phase1bConfigurationError } from "@/lib/phase1b";
+import { ACTIVE_LISTING_WINDOW_DAYS, UNCERTAIN_LISTING_WEIGHT, confidenceFor, isPhase1bEnabled, phase1bConfigurationError, priceReliability } from "@/lib/phase1b";
 
 type Seller = { id: string; name: string; domain: string };
 type DiscoveryResult = { url: string; title: string };
@@ -64,7 +64,7 @@ export async function researchWatch(pool: Pool, watch: Watch, runId: string) {
     }
   }
 
-  const metrics = await createMetrics(pool, watch.id, runId);
+  const metrics = await createMetrics(pool, effectiveWatch, runId);
   return {
     discoveryQueries: discovery.queryCount,
     expanded: phase1b, pagesRead, savedListings, scopeMatchedListings, scopeExcludedListings: savedListings - scopeMatchedListings,
@@ -292,7 +292,19 @@ function mergeDetail(row: ListingCandidate, html: string, detailUrl: string) {
 }
 function isPriceGrounded(row: ListingCandidate) { return numericText(row.groundingSnippet).includes(numericText(row.priceOriginal)); }
 
+export function classifyListingIdentity(title: string, groundingSnippet: string, watch: Pick<Watch, "reference_number" | "scope">) {
+  const text = `${title} ${groundingSnippet}`.toLowerCase();
+  const normalized = text.replace(/[^a-z0-9]/g, "");
+  const reference = watch.reference_number.toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (!normalized.includes(reference)) return "Exact reference not found in listing evidence.";
+  if (/(?:\b(?:watch\s+)?(?:part|parts|accessory|accessories|component|replacement)\b|\b(?:bezel|dial|bracelet|strap|crystal|link|insert|case)\s+(?:only|for|fits?|fit)\b|\b(?:bezel|dial|bracelet|strap|crystal|link|insert|case)[\s-]*only\b)/i.test(text)) return "Listing appears to be a part or accessory, not a complete watch.";
+  const missingTerms = (watch.scope.identityTerms ?? []).filter((term) => term.toLowerCase().split(/\s+/).some((token) => !normalized.includes(token.replace(/[^a-z0-9]/g, ""))));
+  return missingTerms.length ? `Missing required identity terms: ${missingTerms.join(", ")}.` : null;
+}
+
 function classifyScope(listing: ListingCandidate, watch: Watch) {
+  const identityFailure = classifyListingIdentity(listing.title, listing.groundingSnippet, watch);
+  if (identityFailure) return { match: "out_of_scope" as const, reason: identityFailure, weight: 0 };
   const failures: string[] = [], unknown: string[] = [];
   if (watch.scope.condition !== "any") listing.condition === null ? unknown.push("condition") : listing.condition !== watch.scope.condition && failures.push("condition");
   if (watch.scope.papers === "required") listing.hasPapers === null ? unknown.push("papers") : !listing.hasPapers && failures.push("papers");
@@ -331,31 +343,36 @@ async function saveListing(pool: Pool, runId: string, watchId: string, sellerId:
   await pool.query("INSERT INTO evidence (run_id, watch_id, attached_to, attached_id, url, domain, quote) VALUES ($1,$2,'listing',$3,$4,$5,$6)", [runId, watchId, result.rows[0].id, listing.detailUrl ?? listing.sourceUrl, new URL(listing.detailUrl ?? listing.sourceUrl).hostname, listing.groundingSnippet.slice(0, 300)]);
 }
 
-async function createMetrics(pool: Pool, watchId: string, runId: string) {
-  const rows = (await pool.query<{ id: string; price_usd: string; condition: string | null; scope_match_class: ScopeClass; scope_weight: string; seller_domain: string; source_url: string; grounding_snippet: string }>(
-    `SELECT l.id, l.price_usd, l.condition, l.scope_match_class, l.scope_weight, s.domain AS seller_domain, l.source_url, l.grounding_snippet
+async function createMetrics(pool: Pool, watch: Watch, runId: string) {
+  const rows = (await pool.query<{ id: string; title: string; price_usd: string; condition: string | null; scope_match_class: ScopeClass; scope_weight: string; seller_domain: string; source_url: string; grounding_snippet: string }>(
+    `SELECT l.id, l.title, l.price_usd, l.condition, l.scope_match_class, l.scope_weight, s.domain AS seller_domain, l.source_url, l.grounding_snippet
      FROM market_listings l JOIN sellers s ON s.id = l.seller_id
      WHERE l.watch_id = $1 AND l.is_active = true AND l.price_usd IS NOT NULL AND l.scope_match_class IN ('in_scope','uncertain')
-       AND l.last_seen_at > now() - ($2 || ' days')::interval`, [watchId, ACTIVE_LISTING_WINDOW_DAYS],
+       AND l.last_seen_at > now() - ($2 || ' days')::interval`, [watch.id, ACTIVE_LISTING_WINDOW_DAYS],
   )).rows;
-  const grey = await savePriceMetric(pool, watchId, runId, "grey_avg", rows.filter((row) => row.condition === "unworn"));
-  const resell = await savePriceMetric(pool, watchId, runId, "resell_avg", rows.filter((row) => row.condition === "pre_owned"));
-  await flagAnomalies(pool, watchId, grey.value, resell.value);
-  const availability = await saveAvailability(pool, watchId, runId, rows.filter((row) => row.scope_match_class === "in_scope").length);
+  // Recheck historical rows here too, so a deployed identity guard immediately
+  // stops old mismatches from contaminating a newly written snapshot.
+  const identityMatched = rows.filter((row) => !classifyListingIdentity(row.title, row.grounding_snippet, watch));
+  const grey = await savePriceMetric(pool, watch.id, runId, "grey_avg", identityMatched.filter((row) => row.condition === "unworn"));
+  const resell = await savePriceMetric(pool, watch.id, runId, "resell_avg", identityMatched.filter((row) => row.condition === "pre_owned"));
+  await flagAnomalies(pool, watch.id, grey.value, resell.value);
+  const availability = await saveAvailability(pool, watch.id, runId, identityMatched.filter((row) => row.scope_match_class === "in_scope").length);
   return { grey, resell, availability };
 }
 async function savePriceMetric(pool: Pool, watchId: string, runId: string, metric: "grey_avg" | "resell_avg", rows: Array<{ id: string; price_usd: string; scope_match_class: ScopeClass; scope_weight: string; seller_domain: string; source_url: string; grounding_snippet: string }>) {
   const values = rows.map((row) => ({ ...row, value: Number(row.price_usd), weight: Number(row.scope_weight) }));
-  const retained = iqrRetained(values), value = weightedMedian(retained);
-  const uncertain = retained.filter((row) => row.scope_match_class === "uncertain").length, certain = retained.length - uncertain;
-  const iqr = interquartileRange(retained.map((row) => row.value)), sample = Math.min((certain + uncertain * UNCERTAIN_LISTING_WEIGHT) / 8, 1), diversity = Math.min(new Set(retained.map((row) => row.seller_domain)).size / 4, 1), agreement = value ? Math.max(0, 1 - Math.min((iqr ?? 0) / value, 1)) : 0;
-  const confidence = confidenceFor(sample, diversity, agreement, Boolean(value));
+  const uncertain = values.filter((row) => row.scope_match_class === "uncertain").length;
+  const retained = iqrRetained(values.filter((row) => row.scope_match_class === "in_scope")), value = weightedMedian(retained);
+  const certain = retained.length;
+  const iqr = interquartileRange(retained.map((row) => row.value)), diversity = Math.min(new Set(retained.map((row) => row.seller_domain)).size / 4, 1), agreement = value ? Math.max(0, 1 - Math.min((iqr ?? 0) / value, 1)) : 0;
+  const reliability = priceReliability(value, certain, uncertain);
+  const confidence = confidenceFor(Math.min(certain / 8, 1), diversity, agreement, reliability.eligibleForComparison);
   const inserted = await pool.query<{ id: string }>(
     `INSERT INTO metric_snapshots (watch_id, run_id, metric, value, value_low, value_high, n, n_uncertain, outliers_dropped, conf_sample, conf_diversity, conf_agreement, confidence)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`, [watchId, runId, metric, value, retained.length ? Math.min(...retained.map((row) => row.value)) : null, retained.length ? Math.max(...retained.map((row) => row.value)) : null, certain, uncertain, values.length - retained.length, sample, diversity, agreement, confidence],
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`, [watchId, runId, metric, reliability.eligibleForComparison ? value : null, retained.length ? Math.min(...retained.map((row) => row.value)) : null, retained.length ? Math.max(...retained.map((row) => row.value)) : null, certain, uncertain, values.filter((row) => row.scope_match_class === "in_scope").length - retained.length, Math.min(certain / 8, 1), diversity, agreement, confidence],
   );
   for (const row of retained) await pool.query("INSERT INTO evidence (run_id, watch_id, attached_to, attached_id, url, domain, quote) VALUES ($1,$2,'snapshot',$3,$4,$5,$6)", [runId, watchId, inserted.rows[0].id, row.source_url, row.seller_domain, row.grounding_snippet?.slice(0, 300) ?? row.source_url]);
-  return { value, n: certain, uncertain, confidence };
+  return { value: reliability.eligibleForComparison ? value : null, n: certain, uncertain, confidence };
 }
 async function saveAvailability(pool: Pool, watchId: string, runId: string, count: number) {
   const baseline = await pool.query<{ baseline: string | null; prior: string | null }>(

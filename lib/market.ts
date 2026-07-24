@@ -36,13 +36,22 @@ export async function getSevenDayMovers(watchIds: string[]) {
   const movers = new Map<string, number>();
   if (!watchIds.length) return movers;
   const result = await db.query<{ watch_id: string; current: string | null; prior: string | null }>(
-    `WITH ranked AS (
+    `WITH latest AS (
+       SELECT DISTINCT ON (watch_id) watch_id, value, n, n_uncertain
+       FROM metric_snapshots
+       WHERE watch_id = ANY($1::uuid[]) AND metric = 'resell_avg'
+       ORDER BY watch_id, computed_at DESC
+     ), ranked AS (
        SELECT watch_id, value, computed_at,
          row_number() OVER (PARTITION BY watch_id ORDER BY computed_at DESC) AS newest,
          row_number() OVER (PARTITION BY watch_id ORDER BY computed_at ASC) AS oldest
        FROM metric_snapshots
-       WHERE watch_id = ANY($1::uuid[]) AND metric = 'resell_avg' AND value IS NOT NULL AND computed_at >= now() - interval '7 days'
-     ) SELECT watch_id, max(value) FILTER (WHERE newest = 1) AS current, max(value) FILTER (WHERE oldest = 1) AS prior FROM ranked GROUP BY watch_id`, [watchIds],
+       WHERE watch_id = ANY($1::uuid[]) AND metric = 'resell_avg' AND value IS NOT NULL
+         AND n >= 3 AND n_uncertain <= n AND computed_at >= now() - interval '7 days'
+     ) SELECT ranked.watch_id, max(ranked.value) FILTER (WHERE newest = 1) AS current, max(ranked.value) FILTER (WHERE oldest = 1) AS prior
+       FROM ranked JOIN latest ON latest.watch_id = ranked.watch_id
+       WHERE latest.value IS NOT NULL AND latest.n >= 3 AND latest.n_uncertain <= latest.n
+       GROUP BY ranked.watch_id`, [watchIds],
   );
   for (const row of result.rows) if (row.current && row.prior && Number(row.prior) !== 0) movers.set(row.watch_id, (Number(row.current) - Number(row.prior)) / Number(row.prior));
   return movers;
@@ -122,7 +131,8 @@ async function getMovingAverages(watchId: string) {
     `WITH daily AS (
        SELECT DISTINCT ON (metric, date_trunc('day', computed_at)) metric, value, provenance, computed_at
        FROM metric_snapshots
-       WHERE watch_id = $1 AND metric IN ('grey_avg','resell_avg') AND value IS NOT NULL AND computed_at >= now() - interval '365 days'
+       WHERE watch_id = $1 AND metric IN ('grey_avg','resell_avg') AND value IS NOT NULL
+         AND n >= 3 AND n_uncertain <= n AND computed_at >= now() - interval '365 days'
        ORDER BY metric, date_trunc('day', computed_at), computed_at DESC
      ) SELECT metric, avg(value) AS value, min(computed_at) AS first_at, count(*) AS points,
        count(*) FILTER (WHERE provenance = 'backfill') AS backfill_count FROM daily GROUP BY metric`, [watchId],

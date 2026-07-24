@@ -1,5 +1,5 @@
 import type { QueryResult, QueryResultRow } from "pg";
-import { freshness, type Confidence } from "@/lib/phase1b";
+import { freshness, priceReliability, type Confidence, type PriceReliabilityStatus } from "@/lib/phase1b";
 
 export type DatabaseReader = {
   query<Row extends QueryResultRow>(text: string, values?: unknown[]): Promise<QueryResult<Row>>;
@@ -44,6 +44,9 @@ export type PriceMetric = {
   confidence: Confidence | null;
   computedAt: string | null;
   freshness: ReturnType<typeof freshness>;
+  reliabilityStatus: PriceReliabilityStatus;
+  eligibleForComparison: boolean;
+  withholdReason: string | null;
 };
 
 export type AvailabilityMetric = {
@@ -98,6 +101,7 @@ function isoOrNull(value: Date | null) {
 }
 
 function priceMetric(value: string | null, n: number | null, nUncertain: number | null, confidence: Confidence | null, computedAt: Date | null): PriceMetric {
+  const reliability = priceReliability(numberOrNull(value), n ?? 0, nUncertain ?? 0);
   return {
     askingPriceUsd: numberOrNull(value),
     sampleSize: n ?? 0,
@@ -105,6 +109,9 @@ function priceMetric(value: string | null, n: number | null, nUncertain: number 
     confidence,
     computedAt: isoOrNull(computedAt),
     freshness: freshness(computedAt),
+    reliabilityStatus: reliability.status,
+    eligibleForComparison: reliability.eligibleForComparison,
+    withholdReason: reliability.reason,
   };
 }
 
