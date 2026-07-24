@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Pool } from "pg";
 import type { Watch } from "@/lib/watches";
-import { ACTIVE_LISTING_WINDOW_DAYS, UNCERTAIN_LISTING_WEIGHT, confidenceFor, isPhase1bEnabled, phase1bConfigurationError, priceReliability } from "@/lib/phase1b";
+import { ACTIVE_LISTING_WINDOW_DAYS, MIN_LISTING_PRICE_TO_RETAIL_RATIO, UNCERTAIN_LISTING_WEIGHT, confidenceFor, isPhase1bEnabled, phase1bConfigurationError, priceReliability } from "@/lib/phase1b";
 
 type Seller = { id: string; name: string; domain: string };
 type DiscoveryResult = { url: string; title: string };
@@ -52,7 +52,7 @@ export async function researchWatch(pool: Pool, watch: Watch, runId: string) {
         if (!isPriceGrounded(enriched)) { groundingDrops += 1; continue; }
         const priceUsd = normalizeToUsd(enriched.priceOriginal, enriched.currency, fxRates);
         if (!priceUsd || priceUsd.value < 1_000 || priceUsd.value > 1_000_000) { groundingDrops += 1; continue; }
-        const scope = classifyScope(enriched, effectiveWatch);
+        const scope = classifyListing(enriched, effectiveWatch, priceUsd.value);
         const stored: StoredListing = { ...enriched, priceUsd: priceUsd.value, fxRate: priceUsd.rate, scope };
         await saveListing(pool, runId, watch.id, seller.id, stored);
         savedListings += 1;
@@ -296,10 +296,23 @@ export function classifyListingIdentity(title: string, groundingSnippet: string,
   const text = `${title} ${groundingSnippet}`.toLowerCase();
   const normalized = text.replace(/[^a-z0-9]/g, "");
   const reference = watch.reference_number.toLowerCase().replace(/[^a-z0-9]/g, "");
-  if (!normalized.includes(reference)) return "Exact reference not found in listing evidence.";
+  const baseReference = watch.reference_number.split("-")[0].toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (!normalized.includes(reference) && !normalized.includes(baseReference)) return "Tracked reference or base reference not found in listing evidence.";
   if (/(?:\b(?:watch\s+)?(?:part|parts|accessory|accessories|component|replacement)\b|\b(?:bezel|dial|bracelet|strap|crystal|link|insert|case)\s+(?:only|for|fits?|fit)\b|\b(?:bezel|dial|bracelet|strap|crystal|link|insert|case)[\s-]*only\b)/i.test(text)) return "Listing appears to be a part or accessory, not a complete watch.";
   const missingTerms = (watch.scope.identityTerms ?? []).filter((term) => term.toLowerCase().split(/\s+/).some((token) => !normalized.includes(token.replace(/[^a-z0-9]/g, ""))));
   return missingTerms.length ? `Missing required identity terms: ${missingTerms.join(", ")}.` : null;
+}
+
+export function listingPriceSanityReason(priceUsd: number, watch: Pick<Watch, "retail_price_usd">) {
+  const retail = Number(watch.retail_price_usd);
+  if (!Number.isFinite(retail) || retail <= 0 || priceUsd >= retail * MIN_LISTING_PRICE_TO_RETAIL_RATIO) return null;
+  return `Price is below ${Math.round(MIN_LISTING_PRICE_TO_RETAIL_RATIO * 100)}% of the saved retail price; retained for review instead of used as a watch ask.`;
+}
+
+function classifyListing(listing: ListingCandidate, watch: Watch, priceUsd: number) {
+  const priceFailure = listingPriceSanityReason(priceUsd, watch);
+  if (priceFailure) return { match: "out_of_scope" as const, reason: priceFailure, weight: 0 };
+  return classifyScope(listing, watch);
 }
 
 function classifyScope(listing: ListingCandidate, watch: Watch) {
@@ -352,11 +365,11 @@ async function createMetrics(pool: Pool, watch: Watch, runId: string) {
   )).rows;
   // Recheck historical rows here too, so a deployed identity guard immediately
   // stops old mismatches from contaminating a newly written snapshot.
-  const identityMatched = rows.filter((row) => !classifyListingIdentity(row.title, row.grounding_snippet, watch));
-  const grey = await savePriceMetric(pool, watch.id, runId, "grey_avg", identityMatched.filter((row) => row.condition === "unworn"));
-  const resell = await savePriceMetric(pool, watch.id, runId, "resell_avg", identityMatched.filter((row) => row.condition === "pre_owned"));
+  const eligibleRows = rows.filter((row) => !classifyListingIdentity(row.title, row.grounding_snippet, watch) && !listingPriceSanityReason(Number(row.price_usd), watch));
+  const grey = await savePriceMetric(pool, watch.id, runId, "grey_avg", eligibleRows.filter((row) => row.condition === "unworn"));
+  const resell = await savePriceMetric(pool, watch.id, runId, "resell_avg", eligibleRows.filter((row) => row.condition === "pre_owned"));
   await flagAnomalies(pool, watch.id, grey.value, resell.value);
-  const availability = await saveAvailability(pool, watch.id, runId, identityMatched.filter((row) => row.scope_match_class === "in_scope").length);
+  const availability = await saveAvailability(pool, watch.id, runId, eligibleRows.filter((row) => row.scope_match_class === "in_scope").length);
   return { grey, resell, availability };
 }
 async function savePriceMetric(pool: Pool, watchId: string, runId: string, metric: "grey_avg" | "resell_avg", rows: Array<{ id: string; price_usd: string; scope_match_class: ScopeClass; scope_weight: string; seller_domain: string; source_url: string; grounding_snippet: string }>) {

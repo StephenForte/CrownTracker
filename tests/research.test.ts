@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { baseReferenceFallbackQuery, classifyListingIdentity, extractListingRows, priceQueryTemplates } from "@/lib/research";
+import { baseReferenceFallbackQuery, classifyListingIdentity, extractListingRows, listingPriceSanityReason, priceQueryTemplates } from "@/lib/research";
 import type { Watch } from "@/lib/watches";
 
 test("extractListingRows extracts products from JSON-LD script tags", () => {
@@ -317,9 +317,12 @@ test("base-reference fallback only applies to a subvariant", () => {
 });
 
 test("listing identity requires the tracked reference and rejects parts", () => {
-  const watch = { reference_number: "126509-0008", scope: { identityTerms: ["factory baguette"] } } as Watch;
+  const watch = { reference_number: "126509-0008", scope: { identityTerms: ["factory baguette"] }, retail_price_usd: "59100" } as Watch;
   assert.equal(classifyListingIdentity("Rolex 126509-0008 factory baguette Daytona", "Complete watch with factory baguette dial.", watch), null);
-  assert.match(classifyListingIdentity("Rolex 126500LN", "Complete watch", watch) ?? "", /Exact reference/);
+  assert.equal(classifyListingIdentity("Rolex 126509 factory baguette Daytona", "Complete watch with factory baguette dial.", watch), null);
+  assert.match(classifyListingIdentity("Rolex 126500LN", "Complete watch", watch) ?? "", /reference/);
   assert.match(classifyListingIdentity("Rolex 126509-0008 bezel for Daytona", "Replacement bezel for 126509-0008", watch) ?? "", /part or accessory/);
   assert.match(classifyListingIdentity("Rolex 126509-0008", "Complete watch", watch) ?? "", /Missing required/);
+  assert.match(listingPriceSanityReason(4950, watch) ?? "", /below 20%/);
+  assert.equal(listingPriceSanityReason(50950, watch), null);
 });

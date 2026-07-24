@@ -8,6 +8,9 @@ export const PRICE_STALE_AFTER_HOURS = 48;
 export const PRICE_OUTDATED_AFTER_HOURS = 96;
 export const ACTIVE_LISTING_WINDOW_DAYS = 14;
 export const MIN_CONFIRMED_LISTINGS_FOR_PRICE = 3;
+// A price below this fraction of a saved retail price is overwhelmingly likely
+// to be a deposit, payment, part, or extraction error rather than a watch ask.
+export const MIN_LISTING_PRICE_TO_RETAIL_RATIO = 0.2;
 
 /**
  * Phase 1B changes the network, provider-cost, and data-quality contract. It
