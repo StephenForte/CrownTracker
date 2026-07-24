@@ -297,10 +297,37 @@ export function classifyListingIdentity(title: string, groundingSnippet: string,
   const normalized = text.replace(/[^a-z0-9]/g, "");
   const reference = watch.reference_number.toLowerCase().replace(/[^a-z0-9]/g, "");
   const baseReference = watch.reference_number.split("-")[0].toLowerCase().replace(/[^a-z0-9]/g, "");
-  if (!normalized.includes(reference) && !normalized.includes(baseReference)) return "Tracked reference or base reference not found in listing evidence.";
+  const identityTerms = watch.scope.identityTerms ?? [];
+  const numericStem = reference.match(/^(\d+)[a-z]+$/)?.[1];
+  const hasExactReference = normalized.includes(reference) || normalized.includes(baseReference);
+  // A dealer may abbreviate a letter-suffixed Rolex reference (for example,
+  // 126610LN as 126610). Allow that only when the user has supplied variant
+  // terms and the evidence does not name a different suffix variant (126610LV).
+  const canUseBareNumericStem = Boolean(
+    numericStem
+      && identityTerms.length
+      && hasStandaloneNumericReference(text, numericStem)
+      && !hasConflictingReferenceVariant(text, numericStem, reference),
+  );
+  if (!hasExactReference && !canUseBareNumericStem) return "Tracked reference or base reference not found in listing evidence.";
   if (/(?:\b(?:watch\s+)?(?:part|parts|accessory|accessories|component|replacement)\b|\b(?:bezel|dial|bracelet|strap|crystal|link|insert|case)\s+(?:only|for|fits?|fit)\b|\b(?:bezel|dial|bracelet|strap|crystal|link|insert|case)[\s-]*only\b)/i.test(text)) return "Listing appears to be a part or accessory, not a complete watch.";
-  const missingTerms = (watch.scope.identityTerms ?? []).filter((term) => term.toLowerCase().split(/\s+/).some((token) => !normalized.includes(token.replace(/[^a-z0-9]/g, ""))));
+  const missingTerms = identityTerms.filter((term) => term.toLowerCase().split(/\s+/).some((token) => !normalized.includes(token.replace(/[^a-z0-9]/g, ""))));
   return missingTerms.length ? `Missing required identity terms: ${missingTerms.join(", ")}.` : null;
+}
+
+function hasStandaloneNumericReference(text: string, numericStem: string) {
+  return new RegExp(`(?:^|[^a-z0-9])${numericStem}(?=$|[^a-z0-9])`, "i").test(text);
+}
+
+function hasConflictingReferenceVariant(text: string, numericStem: string, reference: string) {
+  const variants = text.matchAll(new RegExp(`(?:^|[^a-z0-9])${numericStem}([a-z]+)(?=$|[^a-z0-9])`, "gi"));
+  return [...variants].some((match) => `${numericStem}${match[1].toLowerCase()}` !== reference);
+}
+
+export function isListingUnavailable(groundingSnippet: string) {
+  const text = groundingSnippet.toLowerCase();
+  return /"availability"\s*:\s*"[^"\n]*(?:outofstock|soldout)/.test(text)
+    || /\b(?:out\s*-?of\s*-?stock|sold\s*-?out)\b/.test(text);
 }
 
 export function listingPriceSanityReason(priceUsd: number, watch: Pick<Watch, "retail_price_usd">) {
@@ -310,6 +337,7 @@ export function listingPriceSanityReason(priceUsd: number, watch: Pick<Watch, "r
 }
 
 function classifyListing(listing: ListingCandidate, watch: Watch, priceUsd: number) {
+  if (isListingUnavailable(listing.groundingSnippet)) return { match: "out_of_scope" as const, reason: "Listing is marked out of stock.", weight: 0 };
   const priceFailure = listingPriceSanityReason(priceUsd, watch);
   if (priceFailure) return { match: "out_of_scope" as const, reason: priceFailure, weight: 0 };
   return classifyScope(listing, watch);
@@ -365,7 +393,7 @@ async function createMetrics(pool: Pool, watch: Watch, runId: string) {
   )).rows;
   // Recheck historical rows here too, so a deployed identity guard immediately
   // stops old mismatches from contaminating a newly written snapshot.
-  const eligibleRows = rows.filter((row) => !classifyListingIdentity(row.title, row.grounding_snippet, watch) && !listingPriceSanityReason(Number(row.price_usd), watch));
+  const eligibleRows = rows.filter((row) => !classifyListingIdentity(row.title, row.grounding_snippet, watch) && !listingPriceSanityReason(Number(row.price_usd), watch) && !isListingUnavailable(row.grounding_snippet));
   const grey = await savePriceMetric(pool, watch.id, runId, "grey_avg", eligibleRows.filter((row) => row.condition === "unworn"));
   const resell = await savePriceMetric(pool, watch.id, runId, "resell_avg", eligibleRows.filter((row) => row.condition === "pre_owned"));
   await flagAnomalies(pool, watch.id, grey.value, resell.value);

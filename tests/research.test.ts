@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { baseReferenceFallbackQuery, classifyListingIdentity, extractListingRows, listingPriceSanityReason, priceQueryTemplates } from "@/lib/research";
+import { baseReferenceFallbackQuery, classifyListingIdentity, extractListingRows, isListingUnavailable, listingPriceSanityReason, priceQueryTemplates } from "@/lib/research";
 import type { Watch } from "@/lib/watches";
 
 test("extractListingRows extracts products from JSON-LD script tags", () => {
@@ -325,4 +325,16 @@ test("listing identity requires the tracked reference and rejects parts", () => 
   assert.match(classifyListingIdentity("Rolex 126509-0008", "Complete watch", watch) ?? "", /Missing required/);
   assert.match(listingPriceSanityReason(4950, watch) ?? "", /below 20%/);
   assert.equal(listingPriceSanityReason(50950, watch), null);
+});
+
+test("letter-suffixed references may use a bare numeric stem only with scoped identity terms", () => {
+  const watch = { reference_number: "126610LN", scope: { condition: "any", yearMin: null, yearMax: null, papers: "not_required", box: "not_required", warranty: "none_ok", identityTerms: ["black"] } } as Watch;
+  assert.equal(classifyListingIdentity("Rolex Submariner Ref 126610 Black Dial", "Complete watch", watch), null);
+  assert.match(classifyListingIdentity("Rolex Submariner Ref 126610LV Black Dial", "Complete watch", watch) ?? "", /reference/);
+  assert.match(classifyListingIdentity("Rolex Submariner Ref 126610", "Complete watch", { ...watch, scope: { ...watch.scope, identityTerms: [] } }) ?? "", /reference/);
+});
+
+test("out-of-stock evidence never counts as a current listing", () => {
+  assert.equal(isListingUnavailable('{"offers":{"availability":"https://schema.org/OutOfStock"}}'), true);
+  assert.equal(isListingUnavailable('{"offers":{"availability":"InStock"}}'), false);
 });
