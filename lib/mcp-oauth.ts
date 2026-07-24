@@ -116,12 +116,15 @@ export function mcpEndpointUrl() {
 }
 
 export function authorizationServerUrl() {
-  return mcpPublicBaseUrl().toString();
+  // OAuth issuer identifiers are compared as exact strings. URL.toString()
+  // supplies a trailing slash for an origin-only URL, so remove it here and
+  // use this canonical value everywhere (metadata and authorization replies).
+  return mcpPublicBaseUrl().toString().replace(/\/$/, "");
 }
 
 /** Canonical issuer for OAuth authorization responses (RFC 9207). */
 export function authorizationServerIssuer() {
-  return authorizationServerUrl().replace(/\/$/, "");
+  return authorizationServerUrl();
 }
 
 export function protectedResourceMetadataUrl() {

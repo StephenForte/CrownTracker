@@ -83,12 +83,13 @@ test("remote MCP publishes OAuth and protected-resource discovery metadata", asy
   const previousPublicUrl = process.env.MCP_PUBLIC_BASE_URL;
   process.env.DATABASE_URL ??= "postgresql://localhost:5432/crown_tracker";
   process.env.MCP_PUBLIC_BASE_URL = "https://crown-tracker.onrender.com";
-  const { mcpEndpointUrl, oauthAuthorizationMetadata, protectedResourceMetadata } = await import("@/lib/mcp-oauth");
+  const { authorizationServerUrl, mcpEndpointUrl, oauthAuthorizationMetadata, protectedResourceMetadata } = await import("@/lib/mcp-oauth");
 
   assert.equal(mcpEndpointUrl(), "https://crown-tracker.onrender.com/mcp");
+  assert.equal(authorizationServerUrl(), "https://crown-tracker.onrender.com");
   assert.deepEqual(protectedResourceMetadata(), {
     resource: "https://crown-tracker.onrender.com/mcp",
-    authorization_servers: ["https://crown-tracker.onrender.com/"],
+    authorization_servers: ["https://crown-tracker.onrender.com"],
     scopes_supported: ["crowntracker.read"],
     bearer_methods_supported: ["header"],
     resource_name: "CrownTracker metrics",
