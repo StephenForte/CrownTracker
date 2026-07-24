@@ -17,10 +17,15 @@ import {
   MCP_REGISTRATION_RATE_LIMIT,
   MCP_REGISTRATION_WINDOW_SECONDS,
   MCP_REVOKED_RETENTION_DAYS,
+  passwordsMatch,
   redirectOriginLabel,
 } from "@/lib/mcp-remote";
 
 export const MCP_READ_SCOPE = "crowntracker.read";
+
+/** Advisory-lock namespace for MCP OAuth critical sections. */
+const MCP_OAUTH_LOCK_NAMESPACE = 872351;
+const MCP_ACTIVE_CLIENTS_LOCK_ID = 1;
 
 type Queryable = {
   query<Row extends QueryResultRow>(text: string, values?: unknown[]): Promise<{ rows: Row[]; rowCount: number | null }>;
@@ -182,6 +187,30 @@ function clientIpBucket(request: Request | null) {
   return hash(raw).slice(0, 24);
 }
 
+function authFailureLockId(bucketKey: string) {
+  return createHash("sha256").update(bucketKey).digest().readInt32BE(0);
+}
+
+async function advisoryXactLock(connection: PoolClient, lockId: number) {
+  await connection.query("SELECT pg_advisory_xact_lock($1, $2)", [MCP_OAUTH_LOCK_NAMESPACE, lockId]);
+}
+
+function authorizationFailureRowBlocked(row: {
+  blocked_until: Date | null;
+  attempt_count: number;
+  window_started_at: Date;
+} | undefined) {
+  if (!row) return false;
+  if (row.blocked_until && row.blocked_until > new Date()) return true;
+  if (
+    row.window_started_at > new Date(Date.now() - MCP_AUTH_FAILURE_WINDOW_SECONDS * 1000)
+    && row.attempt_count >= MCP_AUTH_FAILURE_LIMIT
+  ) {
+    return true;
+  }
+  return false;
+}
+
 async function consumeRateLimit(
   reader: Queryable,
   bucketKey: string,
@@ -273,6 +302,8 @@ export async function registerPublicClient(
   const connection = await adminPool().connect();
   try {
     await connection.query("BEGIN");
+    // Serialize count+insert so concurrent registrations cannot exceed the active-client cap.
+    await advisoryXactLock(connection, MCP_ACTIVE_CLIENTS_LOCK_ID);
     const active = await connection.query<{ count: string }>(
       "SELECT count(*)::text AS count FROM mcp_oauth_clients WHERE revoked_at IS NULL",
     );
@@ -359,13 +390,52 @@ export async function authorizationFailureBlocked(request: Request | null) {
     "SELECT blocked_until, attempt_count, window_started_at FROM mcp_oauth_rate_limits WHERE bucket_key = $1",
     [bucket],
   );
-  const row = result.rows[0];
-  if (!row) return false;
-  if (row.blocked_until && row.blocked_until > new Date()) return true;
-  if (row.window_started_at > new Date(Date.now() - MCP_AUTH_FAILURE_WINDOW_SECONDS * 1000) && row.attempt_count >= MCP_AUTH_FAILURE_LIMIT) {
-    return true;
+  return authorizationFailureRowBlocked(result.rows[0]);
+}
+
+/**
+ * Atomically gate a password attempt against the auth-failure cap.
+ * Check, password compare, and failure recording share one advisory transaction
+ * so concurrent requests cannot exceed MCP_AUTH_FAILURE_LIMIT verifications.
+ */
+export async function completeAuthorizationPasswordAttempt(
+  request: Request | null,
+  provided: string,
+  expected: string,
+): Promise<"blocked" | "mismatch" | "ok"> {
+  const bucket = `authorize:${clientIpBucket(request)}`;
+  const connection = await adminPool().connect();
+  try {
+    await connection.query("BEGIN");
+    await advisoryXactLock(connection, authFailureLockId(bucket));
+    const current = await connection.query<{ blocked_until: Date | null; attempt_count: number; window_started_at: Date }>(
+      "SELECT blocked_until, attempt_count, window_started_at FROM mcp_oauth_rate_limits WHERE bucket_key = $1",
+      [bucket],
+    );
+    if (authorizationFailureRowBlocked(current.rows[0])) {
+      await connection.query("COMMIT");
+      return "blocked";
+    }
+    if (!expected || !passwordsMatch(provided, expected)) {
+      await consumeRateLimit(
+        connection,
+        bucket,
+        MCP_AUTH_FAILURE_LIMIT,
+        MCP_AUTH_FAILURE_WINDOW_SECONDS,
+        MCP_AUTH_COOLDOWN_SECONDS,
+      );
+      await connection.query("COMMIT");
+      return "mismatch";
+    }
+    await clearRateLimit(connection, bucket);
+    await connection.query("COMMIT");
+    return "ok";
+  } catch {
+    await connection.query("ROLLBACK");
+    throw new Error("Could not complete CrownTracker authorization.");
+  } finally {
+    connection.release();
   }
-  return false;
 }
 
 export async function clearAuthorizationFailures(request: Request | null) {
@@ -621,6 +691,7 @@ export async function cleanupMcpOAuthState(reader: Queryable = adminPool()): Pro
         OR (revoked_at IS NULL AND refresh_expires_at < now() - ($1 || ' days')::interval)`,
     [MCP_REVOKED_RETENTION_DAYS],
   );
+  // Revoked clients use the same retention window as codes/tokens/UI visibility.
   const clients = await reader.query(
     `DELETE FROM mcp_oauth_clients c
      WHERE c.revoked_at IS NOT NULL
@@ -637,7 +708,7 @@ export async function cleanupMcpOAuthState(reader: Queryable = adminPool()): Pro
            AND code.consumed_at IS NULL
            AND code.expires_at > now()
        )`,
-    [MCP_IDLE_CLIENT_RETENTION_DAYS],
+    [MCP_REVOKED_RETENTION_DAYS],
   );
   const idleClients = await reader.query(
     `DELETE FROM mcp_oauth_clients c
