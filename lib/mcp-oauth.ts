@@ -395,8 +395,11 @@ export async function authorizationFailureBlocked(request: Request | null) {
 
 /**
  * Atomically gate a password attempt against the auth-failure cap.
- * Check, password compare, and failure recording share one advisory transaction
- * so concurrent requests cannot exceed MCP_AUTH_FAILURE_LIMIT verifications.
+ * Password compare and failure recording share one advisory transaction so
+ * concurrent wrong attempts cannot exceed MCP_AUTH_FAILURE_LIMIT verifications.
+ * A correct password is evaluated before the blocked check so concurrent
+ * failures (or an active cooldown) cannot turn a valid grant into 429; success
+ * clears the failure bucket.
  */
 export async function completeAuthorizationPasswordAttempt(
   request: Request | null,
@@ -408,6 +411,14 @@ export async function completeAuthorizationPasswordAttempt(
   try {
     await connection.query("BEGIN");
     await advisoryXactLock(connection, authFailureLockId(bucket));
+    // Password first: a correct secret must clear/succeed even if parallel
+    // wrong attempts raised the bucket to the failure limit after this request
+    // passed any pre-check, or while a cooldown is active.
+    if (expected && passwordsMatch(provided, expected)) {
+      await clearRateLimit(connection, bucket);
+      await connection.query("COMMIT");
+      return "ok";
+    }
     const current = await connection.query<{ blocked_until: Date | null; attempt_count: number; window_started_at: Date }>(
       "SELECT blocked_until, attempt_count, window_started_at FROM mcp_oauth_rate_limits WHERE bucket_key = $1",
       [bucket],
@@ -416,20 +427,15 @@ export async function completeAuthorizationPasswordAttempt(
       await connection.query("COMMIT");
       return "blocked";
     }
-    if (!expected || !passwordsMatch(provided, expected)) {
-      await consumeRateLimit(
-        connection,
-        bucket,
-        MCP_AUTH_FAILURE_LIMIT,
-        MCP_AUTH_FAILURE_WINDOW_SECONDS,
-        MCP_AUTH_COOLDOWN_SECONDS,
-      );
-      await connection.query("COMMIT");
-      return "mismatch";
-    }
-    await clearRateLimit(connection, bucket);
+    await consumeRateLimit(
+      connection,
+      bucket,
+      MCP_AUTH_FAILURE_LIMIT,
+      MCP_AUTH_FAILURE_WINDOW_SECONDS,
+      MCP_AUTH_COOLDOWN_SECONDS,
+    );
     await connection.query("COMMIT");
-    return "ok";
+    return "mismatch";
   } catch {
     await connection.query("ROLLBACK");
     throw new Error("Could not complete CrownTracker authorization.");

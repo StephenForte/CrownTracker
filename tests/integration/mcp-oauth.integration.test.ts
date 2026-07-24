@@ -280,6 +280,36 @@ test("mcp oauth enforces active-client and auth-failure caps under concurrency",
   )).rows[0];
   assert.ok(bucket);
   assert.equal(bucket.attempt_count, MCP_AUTH_FAILURE_LIMIT);
+
+  // Correct password must succeed (and clear) even after the IP is blocked.
+  assert.equal(
+    await oauth.completeAuthorizationPasswordAttempt(
+      authRequest,
+      "integration-password-123",
+      "integration-password-123",
+    ),
+    "ok",
+  );
+  assert.equal(
+    Number((await pool.query("SELECT count(*)::int AS n FROM mcp_oauth_rate_limits WHERE bucket_key LIKE 'authorize:%'")).rows[0].n),
+    0,
+  );
+
+  // Concurrent wrong attempts plus one correct password: the correct one must
+  // return ok even if siblings raise the bucket to the failure limit first.
+  const mixedRequest = new Request("https://crown-tracker.example/oauth/authorize", {
+    headers: { "x-forwarded-for": "203.0.113.51" },
+  });
+  const mixedAttempts = await Promise.all([
+    ...Array.from({ length: MCP_AUTH_FAILURE_LIMIT }, () =>
+      oauth.completeAuthorizationPasswordAttempt(mixedRequest, "wrong-password", "integration-password-123")),
+    oauth.completeAuthorizationPasswordAttempt(
+      mixedRequest,
+      "integration-password-123",
+      "integration-password-123",
+    ),
+  ]);
+  assert.equal(mixedAttempts.filter((result) => result === "ok").length, 1);
 });
 
 test("mcp oauth migration applies on a fresh schema and reruns cleanly", async (t) => {

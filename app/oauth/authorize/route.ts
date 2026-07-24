@@ -1,5 +1,4 @@
 import {
-  authorizationFailureBlocked,
   completeAuthorizationPasswordAttempt,
   createAuthorizationCode,
   MCP_READ_SCOPE,
@@ -105,9 +104,6 @@ export async function POST(request: Request) {
   if (!isMcpRemoteEnabled()) return mcpRemoteUnavailableResponse();
   const form = await request.formData();
   try {
-    if (await authorizationFailureBlocked(request)) {
-      return errorPage("temporarily_unavailable", "Too many failed authorization attempts. Try again later.", 429);
-    }
     const authorization = await validateAuthorizationRequest(asSearchParams(form));
     if ("error" in authorization) return errorPage(authorization.error, authorization.description);
     if (String(form.get("confirm_destination") ?? "") !== "1") {
