@@ -37,7 +37,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     if (!scope.success || !hasValidYearRange(scope.data)) return NextResponse.json({ error: "Invalid market scope." }, { status: 400 });
     const phase1aError = !isPhase1bEnabled() ? phase1aScopeError(scope.data) : null;
     if (phase1aError) return NextResponse.json({ error: phase1aError }, { status: 400 });
-    const previous = await db.query<{ scope: unknown }>(`SELECT scope FROM watches WHERE ${ownership}`, [id, id, ownerEmail]);
+    const previous = await db.query<{ scope: unknown }>("SELECT scope FROM watches WHERE id = $1 AND user_id = (SELECT id FROM users WHERE email = $2)", [id, ownerEmail]);
     if (!previous.rowCount) return NextResponse.json({ error: "Watch not found." }, { status: 404 });
     result = await db.query(`UPDATE watches SET scope = $1::jsonb, updated_at = now() WHERE ${ownership} RETURNING id`, [JSON.stringify(scope.data), id, ownerEmail]);
     scopeChanged = true;
