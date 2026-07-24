@@ -119,12 +119,17 @@ export function authorizationServerUrl() {
   return mcpPublicBaseUrl().toString();
 }
 
+/** Canonical issuer for OAuth authorization responses (RFC 9207). */
+export function authorizationServerIssuer() {
+  return authorizationServerUrl().replace(/\/$/, "");
+}
+
 export function protectedResourceMetadataUrl() {
   return new URL("/.well-known/oauth-protected-resource/mcp", mcpPublicBaseUrl()).toString();
 }
 
 export function oauthAuthorizationMetadata() {
-  const base = authorizationServerUrl().replace(/\/$/, "");
+  const base = authorizationServerIssuer();
   return {
     issuer: base,
     authorization_endpoint: `${base}/oauth/authorize`,
@@ -135,6 +140,7 @@ export function oauthAuthorizationMetadata() {
     token_endpoint_auth_methods_supported: ["none"],
     code_challenge_methods_supported: ["S256"],
     scopes_supported: [MCP_READ_SCOPE],
+    authorization_response_iss_parameter_supported: true,
   };
 }
 

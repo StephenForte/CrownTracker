@@ -1,5 +1,6 @@
 import {
   authorizationFailureBlocked,
+  authorizationServerIssuer,
   completeAuthorizationPasswordAttempt,
   createAuthorizationCode,
   MCP_READ_SCOPE,
@@ -130,6 +131,9 @@ export async function POST(request: Request) {
     const redirect = new URL(authorization.redirectUri);
     redirect.searchParams.set("code", code);
     if (authorization.state) redirect.searchParams.set("state", authorization.state);
+    // Bind the response to the discovered authorization server. Newer OAuth/MCP
+    // clients validate this RFC 9207 issuer before exchanging the code.
+    redirect.searchParams.set("iss", authorizationServerIssuer());
     return Response.redirect(redirect, 303);
   } catch {
     return errorPage("server_error", "CrownTracker authorization is temporarily unavailable.", 503);

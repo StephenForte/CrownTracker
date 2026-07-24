@@ -96,6 +96,7 @@ test("remote MCP publishes OAuth and protected-resource discovery metadata", asy
   assert.deepEqual(oauthAuthorizationMetadata().code_challenge_methods_supported, ["S256"]);
   assert.deepEqual(oauthAuthorizationMetadata().grant_types_supported, ["authorization_code", "refresh_token"]);
   assert.deepEqual(oauthAuthorizationMetadata().scopes_supported, ["crowntracker.read"]);
+  assert.equal(oauthAuthorizationMetadata().authorization_response_iss_parameter_supported, true);
 
   if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;
   else process.env.DATABASE_URL = previousDatabaseUrl;

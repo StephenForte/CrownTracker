@@ -402,7 +402,9 @@ test("blocked authorize POST returns 429 before validation or consent errors", a
     body: validBody.toString(),
   }));
   assert.equal(allowed.status, 303);
-  assert.match(allowed.headers.get("location") ?? "", /code=/);
+  const allowedRedirect = new URL(allowed.headers.get("location") ?? "");
+  assert.ok(allowedRedirect.searchParams.get("code"));
+  assert.equal(allowedRedirect.searchParams.get("iss"), "https://crown-tracker.example");
   assert.equal(await oauth.authorizationFailureBlocked(authRequest), false);
 });
 
