@@ -1,9 +1,7 @@
 import {
-  authorizationFailureBlocked,
-  clearAuthorizationFailures,
+  completeAuthorizationPasswordAttempt,
   createAuthorizationCode,
   MCP_READ_SCOPE,
-  recordAuthorizationFailure,
   type AuthorizationRequest,
   validateAuthorizationRequest,
 } from "@/lib/mcp-oauth";
@@ -12,7 +10,6 @@ import {
   isMcpRemoteEnabled,
   MCP_REFRESH_TOKEN_LIFETIME_SECONDS,
   mcpRemoteUnavailableResponse,
-  passwordsMatch,
 } from "@/lib/mcp-remote";
 
 export const runtime = "nodejs";
@@ -107,9 +104,6 @@ export async function POST(request: Request) {
   if (!isMcpRemoteEnabled()) return mcpRemoteUnavailableResponse();
   const form = await request.formData();
   try {
-    if (await authorizationFailureBlocked(request)) {
-      return errorPage("temporarily_unavailable", "Too many failed authorization attempts. Try again later.", 429);
-    }
     const authorization = await validateAuthorizationRequest(asSearchParams(form));
     if ("error" in authorization) return errorPage(authorization.error, authorization.description);
     if (String(form.get("confirm_destination") ?? "") !== "1") {
@@ -117,11 +111,13 @@ export async function POST(request: Request) {
     }
     const expected = process.env.APP_PASSWORD ?? "";
     const provided = String(form.get("password") ?? "");
-    if (!expected || !passwordsMatch(provided, expected)) {
-      await recordAuthorizationFailure(request);
+    const passwordAttempt = await completeAuthorizationPasswordAttempt(request, provided, expected);
+    if (passwordAttempt === "blocked") {
+      return errorPage("temporarily_unavailable", "Too many failed authorization attempts. Try again later.", 429);
+    }
+    if (passwordAttempt === "mismatch") {
       return formPage(authorization, "That password did not match.");
     }
-    await clearAuthorizationFailures(request);
     const code = await createAuthorizationCode(authorization);
     const redirect = new URL(authorization.redirectUri);
     redirect.searchParams.set("code", code);

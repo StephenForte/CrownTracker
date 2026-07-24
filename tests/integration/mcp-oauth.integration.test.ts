@@ -187,9 +187,10 @@ test("mcp oauth integration: lifecycle, revoke, cleanup, and migration idempoten
   assert.ok((await oauth.revokeAllMcpClients()) >= 1);
   assert.equal(await oauth.verifyMcpBearer(`Bearer ${secondTokens.access_token}`, pool), null);
 
-  await pool.query("UPDATE mcp_oauth_codes SET consumed_at = now() - interval '30 days' WHERE consumed_at IS NOT NULL");
-  await pool.query("UPDATE mcp_oauth_tokens SET revoked_at = now() - interval '30 days' WHERE revoked_at IS NOT NULL");
-  await pool.query("UPDATE mcp_oauth_clients SET revoked_at = now() - interval '60 days' WHERE revoked_at IS NOT NULL");
+  await pool.query("UPDATE mcp_oauth_codes SET consumed_at = now() - interval '10 days' WHERE consumed_at IS NOT NULL");
+  await pool.query("UPDATE mcp_oauth_tokens SET revoked_at = now() - interval '10 days' WHERE revoked_at IS NOT NULL");
+  // 10 days > MCP_REVOKED_RETENTION_DAYS (7) and < MCP_IDLE_CLIENT_RETENTION_DAYS (30).
+  await pool.query("UPDATE mcp_oauth_clients SET revoked_at = now() - interval '10 days' WHERE revoked_at IS NOT NULL");
   const cleanup = await oauth.cleanupMcpOAuthState(pool);
   assert.ok(cleanup.tokensDeleted >= 1);
   assert.ok(cleanup.clientsDeleted >= 1);
@@ -209,6 +210,114 @@ test("mcp oauth integration: lifecycle, revoke, cleanup, and migration idempoten
   assert.equal(limited, true);
   const activeClients = Number((await pool.query("SELECT count(*)::int AS n FROM mcp_oauth_clients WHERE revoked_at IS NULL")).rows[0].n);
   assert.ok(activeClients <= 25);
+});
+
+test("mcp oauth enforces active-client and auth-failure caps under concurrency", async (t) => {
+  const integrationDb = `crown_tracker_mcp_caps_${randomBytes(4).toString("hex")}`;
+  const bootstrap = new Pool({ connectionString: adminUrl });
+  await bootstrap.query(`CREATE DATABASE ${integrationDb}`);
+  const databaseUrl = `${adminUrl.replace(/\/[^/?]+(\?|$)/, `/${integrationDb}$1`)}`;
+  const pool = new Pool({ connectionString: databaseUrl });
+
+  t.after(async () => {
+    const oauth = await import("@/lib/mcp-oauth");
+    oauth.setMcpOAuthDbForTests(null);
+    await pool.end();
+    await bootstrap.query(`DROP DATABASE IF EXISTS ${integrationDb} WITH (FORCE)`);
+    await bootstrap.end();
+  });
+
+  await applyMigrations(pool);
+  // DROP DATABASE … WITH (FORCE) can emit late socket errors after pool.end().
+  pool.on("error", () => {});
+  process.env.DATABASE_URL = databaseUrl;
+  process.env.MCP_REMOTE_ENABLED = "true";
+  process.env.MCP_PUBLIC_BASE_URL = "https://crown-tracker.example";
+  process.env.MCP_DATABASE_URL = databaseUrl;
+  process.env.APP_PASSWORD = "integration-password-123";
+
+  const oauth = await import("@/lib/mcp-oauth");
+  const { MCP_AUTH_FAILURE_LIMIT, MCP_MAX_ACTIVE_CLIENTS } = await import("@/lib/mcp-remote");
+  oauth.setMcpOAuthDbForTests(pool);
+
+  // Leave one active-client slot, then race many registrations from distinct IPs.
+  for (let i = 0; i < MCP_MAX_ACTIVE_CLIENTS - 1; i += 1) {
+    await pool.query(
+      "INSERT INTO mcp_oauth_clients (client_id, redirect_uris, client_name) VALUES ($1, $2::jsonb, $3)",
+      [`seed_${i}`, JSON.stringify([`https://claude.ai/seed/${i}`]), `Seed ${i}`],
+    );
+  }
+  const raced = await Promise.all(
+    Array.from({ length: 8 }, (_, i) => oauth.registerPublicClient(
+      { redirectUris: [`https://claude.ai/race/${i}`], clientName: `Race ${i}` },
+      {
+        request: new Request("https://crown-tracker.example/oauth/register", {
+          headers: { "x-forwarded-for": `198.51.100.${i + 1}` },
+        }),
+      },
+    )),
+  );
+  const created = raced.filter((result) => !("error" in result));
+  const rejected = raced.filter((result) => "error" in result && result.error?.error === "temporarily_unavailable");
+  assert.equal(created.length, 1);
+  assert.equal(rejected.length, 7);
+  const activeAfterRace = Number((await pool.query("SELECT count(*)::int AS n FROM mcp_oauth_clients WHERE revoked_at IS NULL")).rows[0].n);
+  assert.equal(activeAfterRace, MCP_MAX_ACTIVE_CLIENTS);
+
+  const authRequest = new Request("https://crown-tracker.example/oauth/authorize", {
+    headers: { "x-forwarded-for": "203.0.113.50" },
+  });
+  const passwordAttempts = await Promise.all(
+    Array.from({ length: MCP_AUTH_FAILURE_LIMIT + 5 }, () =>
+      oauth.completeAuthorizationPasswordAttempt(authRequest, "wrong-password", "integration-password-123")),
+  );
+  const mismatches = passwordAttempts.filter((result) => result === "mismatch").length;
+  const blocked = passwordAttempts.filter((result) => result === "blocked").length;
+  assert.equal(mismatches, MCP_AUTH_FAILURE_LIMIT);
+  assert.equal(blocked, 5);
+  assert.equal(passwordAttempts.includes("ok"), false);
+
+  const bucket = (await pool.query<{ attempt_count: number }>(
+    "SELECT attempt_count FROM mcp_oauth_rate_limits WHERE bucket_key LIKE 'authorize:%'",
+  )).rows[0];
+  assert.ok(bucket);
+  assert.equal(bucket.attempt_count, MCP_AUTH_FAILURE_LIMIT);
+
+  // Correct password must succeed (and clear) even after the IP is blocked.
+  assert.equal(
+    await oauth.completeAuthorizationPasswordAttempt(
+      authRequest,
+      "integration-password-123",
+      "integration-password-123",
+    ),
+    "ok",
+  );
+  assert.equal(
+    Number((await pool.query("SELECT count(*)::int AS n FROM mcp_oauth_rate_limits WHERE bucket_key LIKE 'authorize:%'")).rows[0].n),
+    0,
+  );
+
+  // Race one more wrong attempt against a correct password at the failure ceiling.
+  // The correct password must still return ok even if the wrong attempt hits the
+  // limit first under the advisory lock.
+  const mixedRequest = new Request("https://crown-tracker.example/oauth/authorize", {
+    headers: { "x-forwarded-for": "203.0.113.51" },
+  });
+  for (let i = 0; i < MCP_AUTH_FAILURE_LIMIT - 1; i += 1) {
+    assert.equal(
+      await oauth.completeAuthorizationPasswordAttempt(mixedRequest, "wrong-password", "integration-password-123"),
+      "mismatch",
+    );
+  }
+  const mixedAttempts = await Promise.all([
+    oauth.completeAuthorizationPasswordAttempt(mixedRequest, "wrong-password", "integration-password-123"),
+    oauth.completeAuthorizationPasswordAttempt(
+      mixedRequest,
+      "integration-password-123",
+      "integration-password-123",
+    ),
+  ]);
+  assert.equal(mixedAttempts.filter((result) => result === "ok").length, 1);
 });
 
 test("mcp oauth migration applies on a fresh schema and reruns cleanly", async (t) => {
