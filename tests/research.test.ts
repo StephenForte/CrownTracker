@@ -333,11 +333,12 @@ test("listing identity requires the tracked reference and rejects parts", () => 
   assert.equal(listingPriceSanityReason(50950, watch), null);
 });
 
-test("letter-suffixed references may use a bare numeric stem only with scoped identity terms", () => {
+test("letter-suffixed references may use a bare numeric stem when no conflicting variant appears", () => {
   const watch = { reference_number: "126610LN", scope: { condition: "any", yearMin: null, yearMax: null, papers: "not_required", box: "not_required", warranty: "none_ok", identityTerms: ["black"] } } as Watch;
   assert.equal(classifyListingIdentity("Rolex Submariner Ref 126610 Black Dial", "Complete watch", watch), null);
   assert.match(classifyListingIdentity("Rolex Submariner Ref 126610LV Black Dial", "Complete watch", watch) ?? "", /reference/);
-  assert.match(classifyListingIdentity("Rolex Submariner Ref 126610", "Complete watch", { ...watch, scope: { ...watch.scope, identityTerms: [] } }) ?? "", /reference/);
+  assert.equal(classifyListingIdentity("Rolex Submariner Ref 126610", "Complete watch", { ...watch, scope: { ...watch.scope, identityTerms: [] } }), null);
+  assert.match(classifyListingIdentity("Rolex Submariner Ref 126610", "Complete watch", { ...watch, scope: { ...watch.scope, identityTerms: ["hulk"] } }) ?? "", /Missing required/);
 });
 
 test("out-of-stock evidence never counts as a current listing", () => {
