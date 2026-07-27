@@ -307,8 +307,14 @@ test("expanded price queries use the exact WatchBase variant and stay within fiv
   ];
   const queries = priceQueryTemplates(watch, sellers);
   assert.equal(queries.length, 5);
-  assert.ok(queries.every((query) => query.includes("126503-0001")));
+  assert.ok(queries[0].includes("126503-0001"));
+  assert.ok(queries.slice(1).every((query) => query.includes("126503")));
+  assert.ok(queries.every((query) => !query.includes(watch.nickname)));
   assert.ok(queries.some((query) => query.includes("site:")));
+
+  const letterSuffixQueries = priceQueryTemplates({ ...watch, reference_number: "126610LN" }, sellers);
+  assert.ok(letterSuffixQueries[0].includes("126610LN"));
+  assert.ok(letterSuffixQueries.slice(1).every((query) => query.includes("126610")));
 });
 
 test("base-reference fallback only applies to a subvariant", () => {
