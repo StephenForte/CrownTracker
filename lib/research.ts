@@ -120,11 +120,12 @@ function needsDetailEnrichment(row: ListingCandidate, watch: Watch) {
 }
 
 export function priceQueryTemplates(watch: Watch, sellers: Seller[]) {
-  const identity = researchIdentity(watch);
+  const exactIdentity = researchIdentity(watch);
+  const broaderIdentity = researchIdentity({ ...watch, reference_number: discoveryReference(watch.reference_number) });
   const rotation = [...sellers].sort((a, b) => stableHash(`${watch.id}:${a.domain}`) - stableHash(`${watch.id}:${b.domain}`)).slice(0, 3);
   return [
-    `${identity} for sale`, `${identity} asking price`,
-    ...rotation.map((seller) => `site:${seller.domain} ${identity} for sale`),
+    `${exactIdentity} for sale`, `${broaderIdentity} asking price`,
+    ...rotation.map((seller) => `site:${seller.domain} ${broaderIdentity} for sale`),
   ];
 }
 
@@ -133,8 +134,17 @@ export function baseReferenceFallbackQuery(watch: Pick<Watch, "reference_number"
   return baseReference !== watch.reference_number ? `Rolex ${baseReference} ${watch.model_name} for sale` : null;
 }
 
-function researchIdentity(watch: Pick<Watch, "reference_number" | "model_name" | "nickname">) {
-  return ["Rolex", watch.reference_number, watch.model_name.replace(/^Rolex\s+/i, ""), watch.nickname].filter(Boolean).join(" ");
+function discoveryReference(referenceNumber: string) {
+  const hyphenBase = referenceNumber.split("-")[0];
+  if (hyphenBase !== referenceNumber) return hyphenBase;
+  return referenceNumber.match(/^(\d+)[a-z]+$/i)?.[1] ?? referenceNumber;
+}
+
+function researchIdentity(watch: Pick<Watch, "reference_number" | "model_name">) {
+  // Nicknames are personal shorthand, not reliable dealer vocabulary. Keep
+  // them out of discovery queries; listing-level identity and scope checks
+  // still decide what reaches a metric.
+  return ["Rolex", watch.reference_number, watch.model_name.replace(/^Rolex\s+/i, "")].filter(Boolean).join(" ");
 }
 
 async function reserveSearchCredit(pool: Pool, credits: number) {
