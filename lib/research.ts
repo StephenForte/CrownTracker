@@ -27,40 +27,62 @@ export async function researchWatch(pool: Pool, watch: Watch, runId: string) {
   // 1A cannot ground at listing level.
   const effectiveWatch = phase1b ? watch : { ...watch, scope: { ...watch.scope, yearMin: null, yearMax: null, warranty: "none_ok" as const } };
   const sellers = (await pool.query<Seller>("SELECT id, name, domain FROM sellers WHERE curated = true ORDER BY trust_score DESC")).rows;
-  const discovery = await discoverListings(pool, watch, sellers, phase1b);
-  const allowedResults = discovery.results.filter((result) => sellerForUrl(result.url, sellers)).slice(0, phase1b ? 32 : 10);
+  let discovery = await discoverListings(pool, watch, sellers, phase1b);
   const fxRates = phase1b ? await getUsdRates() : { USD: 1 };
+  const seenUrls = new Set<string>();
   let pagesRead = 0, savedListings = 0, scopeMatchedListings = 0, groundingDrops = 0;
   const scopeExclusions = new Map<string, number>();
 
-  for (const result of allowedResults) {
-    try {
-      const seller = sellerForUrl(result.url, sellers);
-      if (!seller) continue;
-      const html = await fetchAllowedPage(result.url, sellers);
-      if (!html) continue;
-      pagesRead += 1;
-      let candidates = extractListingRows(html, result.url, result.title, { allowLoosePage: phase1b, extractScopeAttributes: phase1b });
-      // Haiku adds row-level classification hints, but every retained value still
-      // has to be grounded in the row/detail text below.
-      if (phase1b) candidates = await enrichRowsWithClaude(candidates, html);
-      for (const candidate of candidates) {
-        const detail = phase1b && needsDetailEnrichment(candidate, watch) && candidate.detailUrl && canonicalUrl(candidate.detailUrl) !== canonicalUrl(result.url)
-          ? await fetchDetail(candidate.detailUrl, sellers)
-          : null;
-        const enriched = detail ? mergeDetail(candidate, detail.html, detail.url) : candidate;
-        if (!isPriceGrounded(enriched)) { groundingDrops += 1; continue; }
-        const priceUsd = normalizeToUsd(enriched.priceOriginal, enriched.currency, fxRates);
-        if (!priceUsd || priceUsd.value < 1_000 || priceUsd.value > 1_000_000) { groundingDrops += 1; continue; }
-        const scope = classifyListing(enriched, effectiveWatch, priceUsd.value);
-        const stored: StoredListing = { ...enriched, priceUsd: priceUsd.value, fxRate: priceUsd.rate, scope };
-        await saveListing(pool, runId, watch.id, seller.id, stored);
-        savedListings += 1;
-        if (scope.match === "in_scope") scopeMatchedListings += 1;
-        else if (scope.reason) scopeExclusions.set(scope.reason, (scopeExclusions.get(scope.reason) ?? 0) + 1);
+  const ingestResults = async (results: DiscoveryResult[]) => {
+    const allowedResults = results.filter((result) => sellerForUrl(result.url, sellers)).slice(0, phase1b ? 32 : 10);
+    for (const result of allowedResults) {
+      const key = canonicalUrl(result.url);
+      if (seenUrls.has(key)) continue;
+      seenUrls.add(key);
+      try {
+        const seller = sellerForUrl(result.url, sellers);
+        if (!seller) continue;
+        const html = await fetchAllowedPage(result.url, sellers);
+        if (!html) continue;
+        pagesRead += 1;
+        let candidates = extractListingRows(html, result.url, result.title, { allowLoosePage: phase1b, extractScopeAttributes: phase1b });
+        // Haiku adds row-level classification hints, but every retained value still
+        // has to be grounded in the row/detail text below.
+        if (phase1b) candidates = await enrichRowsWithClaude(candidates, html);
+        for (const candidate of candidates) {
+          const detail = phase1b && needsDetailEnrichment(candidate, watch) && candidate.detailUrl && canonicalUrl(candidate.detailUrl) !== canonicalUrl(result.url)
+            ? await fetchDetail(candidate.detailUrl, sellers)
+            : null;
+          const enriched = detail ? mergeDetail(candidate, detail.html, detail.url) : candidate;
+          if (!isPriceGrounded(enriched)) { groundingDrops += 1; continue; }
+          const priceUsd = normalizeToUsd(enriched.priceOriginal, enriched.currency, fxRates);
+          if (!priceUsd || priceUsd.value < 1_000 || priceUsd.value > 1_000_000) { groundingDrops += 1; continue; }
+          const scope = classifyListing(enriched, effectiveWatch, priceUsd.value);
+          const stored: StoredListing = { ...enriched, priceUsd: priceUsd.value, fxRate: priceUsd.rate, scope };
+          await saveListing(pool, runId, watch.id, seller.id, stored);
+          savedListings += 1;
+          if (scope.match === "in_scope") scopeMatchedListings += 1;
+          else if (scope.reason) scopeExclusions.set(scope.reason, (scopeExclusions.get(scope.reason) ?? 0) + 1);
+        }
+      } catch (error) {
+        console.warn(JSON.stringify({ event: "listing_page_skipped", watchId: watch.id, url: result.url, error: errorMessage(error) }));
       }
-    } catch (error) {
-      console.warn(JSON.stringify({ event: "listing_page_skipped", watchId: watch.id, url: result.url, error: errorMessage(error) }));
+    }
+  };
+
+  await ingestResults(discovery.results);
+
+  // Search hits alone are not enough: if every curated page failed extraction or
+  // grounding, widen once with the base-reference fallback before writing metrics.
+  if (phase1b && savedListings === 0 && !discovery.usedBaseReferenceFallback) {
+    const fallback = await discoverBaseReferenceFallback(pool, watch, sellers);
+    if (fallback) {
+      discovery = {
+        results: [...discovery.results, ...fallback.results],
+        queryCount: discovery.queryCount + fallback.queryCount,
+        usedBaseReferenceFallback: true,
+      };
+      await ingestResults(fallback.results);
     }
   }
 
@@ -96,23 +118,41 @@ async function discoverListings(pool: Pool, watch: Watch, sellers: Seller[], exp
     }
   }
   const hasCuratedResult = [...unique.values()].some((result) => sellerForUrl(result.url, sellers));
-  const fallback = expanded && !hasCuratedResult ? baseReferenceFallbackQuery(watch) : null;
-  if (fallback) {
-    await reserveSearchCredit(pool, 2);
-    const response = await fetch("https://api.tavily.com/search", {
-      method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ query: fallback, search_depth: "advanced", max_results: 12, include_answer: false, include_domains: sellers.map((seller) => seller.domain) }),
-      signal: AbortSignal.timeout(20_000),
-    });
-    if (!response.ok) throw new Error(`Tavily discovery fallback failed with HTTP ${response.status}.`);
-    const body = await response.json() as { results?: Array<{ url?: string; title?: string }> };
-    for (const result of body.results ?? []) if (result.url && isHttpUrl(result.url)) unique.set(canonicalUrl(result.url), { url: result.url, title: result.title?.trim() || "Untitled listing" });
+  if (expanded && !hasCuratedResult) {
+    const fallback = await discoverBaseReferenceFallback(pool, watch, sellers);
+    if (fallback) {
+      for (const result of fallback.results) unique.set(canonicalUrl(result.url), result);
+      return { results: [...unique.values()], queryCount: queries.length + fallback.queryCount, usedBaseReferenceFallback: true };
+    }
   }
-  return { results: [...unique.values()], queryCount: queries.length + (fallback ? 1 : 0), usedBaseReferenceFallback: Boolean(fallback) };
+  return { results: [...unique.values()], queryCount: queries.length, usedBaseReferenceFallback: false };
+}
+
+async function discoverBaseReferenceFallback(pool: Pool, watch: Watch, sellers: Seller[]): Promise<Discovery | null> {
+  const query = baseReferenceFallbackQuery(watch);
+  if (!query) return null;
+  const apiKey = process.env.TAVILY_API_KEY;
+  if (!apiKey) throw new Error("TAVILY_API_KEY is required for the market-research pipeline.");
+  await reserveSearchCredit(pool, 2);
+  const response = await fetch("https://api.tavily.com/search", {
+    method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({ query, search_depth: "advanced", max_results: 12, include_answer: false, include_domains: sellers.map((seller) => seller.domain) }),
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (!response.ok) throw new Error(`Tavily discovery fallback failed with HTTP ${response.status}.`);
+  const body = await response.json() as { results?: Array<{ url?: string; title?: string }> };
+  const results: DiscoveryResult[] = [];
+  for (const result of body.results ?? []) {
+    if (!result.url || !isHttpUrl(result.url)) continue;
+    results.push({ url: result.url, title: result.title?.trim() || "Untitled listing" });
+  }
+  return { results, queryCount: 1, usedBaseReferenceFallback: true };
 }
 
 function needsDetailEnrichment(row: ListingCandidate, watch: Watch) {
-  return (watch.scope.condition !== "any" && row.condition === null)
+  // Always try to resolve unknown condition in Phase 1B callers: grey vs resell
+  // series only count rows with an explicit unworn/pre-owned label.
+  return row.condition === null
     || (watch.scope.papers === "required" && row.hasPapers === null)
     || (watch.scope.box === "required" && row.hasBox === null)
     || (watch.scope.warranty !== "none_ok" && row.warranty === null)
@@ -311,11 +351,10 @@ export function classifyListingIdentity(title: string, groundingSnippet: string,
   const numericStem = reference.match(/^(\d+)[a-z]+$/)?.[1];
   const hasExactReference = normalized.includes(reference) || normalized.includes(baseReference);
   // A dealer may abbreviate a letter-suffixed Rolex reference (for example,
-  // 126610LN as 126610). Allow that only when the user has supplied variant
-  // terms and the evidence does not name a different suffix variant (126610LV).
+  // 126610LN as 126610). Allow that when evidence does not name a conflicting
+  // suffix variant (126610LV). Saved identity terms still apply as an extra filter.
   const canUseBareNumericStem = Boolean(
     numericStem
-      && identityTerms.length
       && hasStandaloneNumericReference(text, numericStem)
       && !hasConflictingReferenceVariant(text, numericStem, reference),
   );
@@ -413,17 +452,25 @@ async function createMetrics(pool: Pool, watch: Watch, runId: string) {
 async function savePriceMetric(pool: Pool, watchId: string, runId: string, metric: "grey_avg" | "resell_avg", rows: Array<{ id: string; price_usd: string; scope_match_class: ScopeClass; scope_weight: string; seller_domain: string; source_url: string; grounding_snippet: string }>) {
   const values = rows.map((row) => ({ ...row, value: Number(row.price_usd), weight: Number(row.scope_weight) }));
   const uncertain = values.filter((row) => row.scope_match_class === "uncertain").length;
-  const retained = iqrRetained(values.filter((row) => row.scope_match_class === "in_scope")), value = weightedMedian(retained);
-  const certain = retained.length;
-  const iqr = interquartileRange(retained.map((row) => row.value)), diversity = Math.min(new Set(retained.map((row) => row.seller_domain)).size / 4, 1), agreement = value ? Math.max(0, 1 - Math.min((iqr ?? 0) / value, 1)) : 0;
+  // Confirmed rows set the comparable sample size; uncertain rows still enter the
+  // weighted median at UNCERTAIN_LISTING_WEIGHT so thin markets keep a labeled estimate.
+  const confirmedCandidates = values.filter((row) => row.scope_match_class === "in_scope");
+  const retainedConfirmed = iqrRetained(confirmedCandidates);
+  const retainedUncertain = values.filter((row) => row.scope_match_class === "uncertain");
+  const retained = [...retainedConfirmed, ...retainedUncertain];
+  const value = weightedMedian(retained);
+  const certain = retainedConfirmed.length;
+  const iqr = interquartileRange(retainedConfirmed.map((row) => row.value)), diversity = Math.min(new Set(retainedConfirmed.map((row) => row.seller_domain)).size / 4, 1), agreement = value ? Math.max(0, 1 - Math.min((iqr ?? 0) / value, 1)) : 0;
   const reliability = priceReliability(value, certain, uncertain);
   const confidence = confidenceFor(Math.min(certain / 8, 1), diversity, agreement, reliability.eligibleForComparison);
   const inserted = await pool.query<{ id: string }>(
     `INSERT INTO metric_snapshots (watch_id, run_id, metric, value, value_low, value_high, n, n_uncertain, outliers_dropped, conf_sample, conf_diversity, conf_agreement, confidence)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`, [watchId, runId, metric, reliability.eligibleForComparison ? value : null, retained.length ? Math.min(...retained.map((row) => row.value)) : null, retained.length ? Math.max(...retained.map((row) => row.value)) : null, certain, uncertain, values.filter((row) => row.scope_match_class === "in_scope").length - retained.length, Math.min(certain / 8, 1), diversity, agreement, confidence],
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`, [watchId, runId, metric, value, retained.length ? Math.min(...retained.map((row) => row.value)) : null, retained.length ? Math.max(...retained.map((row) => row.value)) : null, certain, uncertain, confirmedCandidates.length - retainedConfirmed.length, Math.min(certain / 8, 1), diversity, agreement, confidence],
   );
   for (const row of retained) await pool.query("INSERT INTO evidence (run_id, watch_id, attached_to, attached_id, url, domain, quote) VALUES ($1,$2,'snapshot',$3,$4,$5,$6)", [runId, watchId, inserted.rows[0].id, row.source_url, row.seller_domain, row.grounding_snippet?.slice(0, 300) ?? row.source_url]);
-  return { value: reliability.eligibleForComparison ? value : null, n: certain, uncertain, confidence };
+  // Persist the estimate even when provisional/withheld so the UI can show a
+  // labeled number; movers/alerts still require eligibleForComparison.
+  return { value, n: certain, uncertain, confidence };
 }
 async function saveAvailability(pool: Pool, watchId: string, runId: string, count: number) {
   const baseline = await pool.query<{ baseline: string | null; prior: string | null }>(

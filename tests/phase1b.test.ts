@@ -20,7 +20,10 @@ test("priceReliability withholds zero-confirmed and thin or contaminated reading
     eligibleForComparison: false,
     reason: "No confirmed in-scope listings; 4 uncertain listings retained for review.",
   });
+  assert.equal(priceReliability(15200, 0, 3).status, "withheld");
+  assert.equal(priceReliability(15200, 0, 3).eligibleForComparison, false);
   assert.equal(priceReliability(50950, 2, 0).status, "provisional");
+  assert.equal(priceReliability(50950, 1, 3).status, "provisional");
   assert.equal(priceReliability(null, 2, 0).status, "provisional");
   assert.equal(priceReliability(27995, 2, 41).eligibleForComparison, false);
   assert.equal(priceReliability(9500, 6, 1).status, "verified");

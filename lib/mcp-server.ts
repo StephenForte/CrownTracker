@@ -64,7 +64,7 @@ export function createMetricsMcpServer(reader: DatabaseReader = db) {
         watches,
         notes: [
           "Grey and resell figures are asking-price estimates, not sold-price or transaction data.",
-          "Compare a price only when eligibleForComparison is true. Provisional and withheld readings must not be used for retail-premium or discount claims.",
+          "Compare a price only when eligibleForComparison is true. Provisional and withheld readings may include an indicative askingPriceUsd from confirmed plus half-weighted uncertain listings, but must not be used for retail-premium or discount claims.",
         ],
       };
       return {
