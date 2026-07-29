@@ -23,24 +23,23 @@ function sampleLabel(confirmed: number, uncertain: number, confidence?: Confiden
 }
 
 /**
- * Keeps a raw estimate available to the detail/evidence view without letting a
- * thin or uncertain sample read like a market conclusion on the dashboard.
+ * Gives an early read useful context without treating it as a market conclusion.
  */
 export function presentPriceMetric({ value, confirmed, uncertain, confidence }: PriceInput): PricePresentation {
   const reliability = priceReliability(value, confirmed, uncertain);
   if (reliability.eligibleForComparison && value !== null && value !== undefined) {
-    return { headline: money(value), detail: `${sampleLabel(confirmed, uncertain, confidence)} · comparison-ready`, ...reliability };
+    return { headline: money(value), detail: sampleLabel(confirmed, uncertain, confidence), ...reliability };
   }
   if (reliability.status === "withheld") {
-    return { headline: "No comparable price", detail: `${sampleLabel(confirmed, uncertain, confidence)} · evidence retained for review`, ...reliability };
+    return { headline: "Unverified ask", detail: `${sampleLabel(confirmed, uncertain, confidence)} · shown in evidence`, ...reliability };
   }
   if (reliability.status === "provisional") {
     const coverage = confirmed < MIN_CONFIRMED_LISTINGS_FOR_PRICE
       ? `${MIN_CONFIRMED_LISTINGS_FOR_PRICE - confirmed} more confirmed needed`
       : "uncertainty outweighs matches";
-    return { headline: "Evidence only", detail: `${sampleLabel(confirmed, uncertain, confidence)} · ${coverage}`, ...reliability };
+    return { headline: value === null || value === undefined ? "Early read" : `~${money(value)}`, detail: `Indicative · ${sampleLabel(confirmed, uncertain, confidence)} · ${coverage}`, ...reliability };
   }
-  return { headline: "Gathering", detail: confirmed ? `${sampleLabel(confirmed, uncertain, confidence)} · no usable estimate yet` : "No confirmed listings yet · needs coverage", ...reliability };
+  return { headline: "Gathering", detail: confirmed ? `${sampleLabel(confirmed, uncertain, confidence)} · no usable estimate yet` : "Searching for in-scope listings", ...reliability };
 }
 
 export function presentObservedSupply(level: string | null | undefined, sampleSize: number | null | undefined, confidence?: Confidence | null) {
