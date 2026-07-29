@@ -139,6 +139,7 @@ h2 { font-size: 26px; font-weight: 600; }
 .metric-pair span, .metric-pair small, .card-footer, .listing-table small { color: var(--muted); font-size: 12px; }
 .metric-pair strong { font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif; font-size: 21px; }
 .market-card .card-footer { min-height: 48px; }
+.market-readiness { background: #fffcf4; border-left: 4px solid var(--gold); border-radius: 0 10px 10px 0; color: var(--muted); margin: 18px 0; padding: 12px 14px; }
 .freshness { display: inline-block; border-radius: 99px; padding: 4px 8px; font-size: 11px; font-weight: 800; white-space: nowrap; background: var(--forest-soft); color: var(--forest); }
 .freshness.stale { background: #fff3d8; color: #825d13; }
 .freshness.outdated { background: #f9e2e0; color: var(--danger); }

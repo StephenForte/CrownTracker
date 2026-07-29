@@ -54,6 +54,7 @@ export function createMetricsMcpServer(reader: DatabaseReader = db) {
         }),
       })),
       notes: z.array(z.string()),
+      reportingGuidance: z.array(z.string()),
     },
   }, async () => {
     try {
@@ -65,6 +66,11 @@ export function createMetricsMcpServer(reader: DatabaseReader = db) {
         notes: [
           "Grey and resell figures are asking-price estimates, not sold-price or transaction data.",
           "Compare a price only when eligibleForComparison is true. Provisional and withheld readings may include an indicative askingPriceUsd from confirmed plus half-weighted uncertain listings, but must not be used for retail-premium or discount claims.",
+        ],
+        reportingGuidance: [
+          "Present a dollar headline only when eligibleForComparison is true. Render provisional readings as Evidence only with confirmed and uncertain counts.",
+          "Render withheld readings as No comparable price with the retained uncertain-listing count. The raw askingPriceUsd is evidence, not a market conclusion.",
+          "For a fresh snapshot with zero or thin listings, say Needs coverage, not Needs refresh. Describe availability as observed supply so zero listings does not claim the market is definitively scarce.",
         ],
       };
       return {
