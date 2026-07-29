@@ -10,6 +10,7 @@ import { NicknameEditor } from "@/components/NicknameEditor";
 import { TrackedWatchUrlEditor } from "@/components/TrackedWatchUrlEditor";
 import { getMarketDetails, type Evidence, type MarketListing, type MetricSnapshot } from "@/lib/market";
 import { freshness, isPhase1bEnabled, priceReliability, trustBucket } from "@/lib/phase1b";
+import { presentObservedSupply, presentPriceMetric } from "@/lib/market-presentation";
 import { emailAlertsEnabled, getWatchAlert } from "@/lib/alerts";
 import { db } from "@/lib/db";
 import { AlertEditor } from "@/components/AlertEditor";
@@ -31,14 +32,8 @@ function EvidenceItems({ evidence }: { evidence: Evidence[] }) {
 function MetricPanel({ title, snapshot, ma, evidence }: { title: string; snapshot?: MetricSnapshot; ma?: { value: string | null; weeks: number; hasFullYear: boolean; backfillCount: number }; evidence: Evidence[] }) {
   const age = freshness(snapshot?.computed_at);
   const reliability = priceReliability(snapshot?.value, snapshot?.n ?? 0, snapshot?.n_uncertain ?? 0);
-  const headline = reliability.eligibleForComparison
-    ? money(snapshot?.value)
-    : reliability.status === "gathering"
-      ? "Gathering"
-      : snapshot?.value
-        ? money(snapshot.value)
-        : "Not comparable";
-  return <section className={`panel metric-panel ${age.state}`}><div className="panel-row"><div className="eyebrow">{title}</div>{snapshot && <span className={`freshness ${age.state}`}>{age.label}</span>}</div><h2>{headline}</h2>{snapshot ? <><p className="muted">{snapshot.n} confirmed{snapshot.n_uncertain ? ` + ${snapshot.n_uncertain} uncertain` : ""} · <b>{reliability.status}</b>{!reliability.eligibleForComparison && snapshot.value ? " · not for comparison" : ""}</p><p className="metric-subline">{reliability.eligibleForComparison ? (ma?.value ? `${ma.hasFullYear ? "52" : ma.weeks}-wk avg${ma.hasFullYear ? "" : " (partial)"}: ${money(ma.value)}` : "Moving average starts with the first verified observation.") : reliability.reason}</p><details className="provenance"><summary>Why this number?</summary><p>Median after IQR outlier removal ({snapshot.outliers_dropped} dropped). Uncertain listings enter at half weight. Confidence: sample {Math.round(snapshot.conf_sample * 100)}%, source diversity {Math.round(snapshot.conf_diversity * 100)}%, agreement {Math.round(snapshot.conf_agreement * 100)}%.</p>{evidence.length ? <EvidenceItems evidence={evidence} /> : <p>No retained evidence is available for this run.</p>}</details></> : <p className="muted">Refresh this watch to collect grounded listing rows.</p>}</section>;
+  const presentation = presentPriceMetric({ value: snapshot?.value, confirmed: snapshot?.n ?? 0, uncertain: snapshot?.n_uncertain ?? 0, confidence: snapshot?.confidence });
+  return <section className={`panel metric-panel ${age.state}`}><div className="panel-row"><div className="eyebrow">{title}</div>{snapshot && <span className={`freshness ${age.state}`}>{age.label}</span>}</div><h2>{presentation.headline}</h2>{snapshot ? <><p className="muted">{presentation.detail}</p><p className="metric-subline">{reliability.eligibleForComparison ? (ma?.value ? `${ma.hasFullYear ? "52" : ma.weeks}-wk avg${ma.hasFullYear ? "" : " (partial)"}: ${money(ma.value)}` : "Moving average starts with the first verified observation.") : reliability.reason}</p><details className="provenance"><summary>Why this number?</summary>{!reliability.eligibleForComparison && snapshot.value && <p>Observed preliminary median: {money(snapshot.value)}. This is retained evidence, not a comparable market price.</p>}<p>Median after IQR outlier removal ({snapshot.outliers_dropped} dropped). Uncertain listings enter at half weight. Confidence: sample {Math.round(snapshot.conf_sample * 100)}%, source diversity {Math.round(snapshot.conf_diversity * 100)}%, agreement {Math.round(snapshot.conf_agreement * 100)}%.</p>{evidence.length ? <EvidenceItems evidence={evidence} /> : <p>No retained evidence is available for this run.</p>}</details></> : <p className="muted">Refresh this watch to collect grounded listing rows.</p>}</section>;
 }
 
 function EvidenceList({ evidence }: { evidence: Evidence[] }) {
@@ -69,6 +64,7 @@ export default async function WatchDetailPage({ params }: { params: Promise<{ id
   const sentimentEvidence = sentiment ? market.evidenceBySnapshot.get(sentiment.id) ?? [] : [];
   const phase1bEnabled = isPhase1bEnabled();
   const priceHistory = market.metrics.filter((metric) => metric.metric === "grey_avg" || metric.metric === "resell_avg");
+  const observedSupply = presentObservedSupply(availability?.label, availability?.n, availability?.confidence);
 
   return (
     <AppShell>
@@ -113,9 +109,9 @@ export default async function WatchDetailPage({ params }: { params: Promise<{ id
               <p className="muted">{watch.discontinued ? "Last known MSRP — discontinued" : "Confirmed during initial lookup"}</p>
             </section>
             <section className="panel">
-              <div className="eyebrow">Availability</div>
-              <h2>{availability?.label ?? "Gathering"}</h2>
-              <p className="muted">{availability ? `${availability.n} currently in-scope listings · ${freshness(availability.computed_at).label}` : "Calculated after the first price scan."}</p>
+              <div className="eyebrow">Observed supply</div>
+              <h2>{observedSupply.headline}</h2>
+              <p className="muted">{availability ? `${observedSupply.detail} · ${freshness(availability.computed_at).label}` : observedSupply.detail}</p>
             </section>
           </section>
           <section className="card-grid">
