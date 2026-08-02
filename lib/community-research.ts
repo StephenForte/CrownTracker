@@ -2,6 +2,7 @@ import type { Pool } from "pg";
 import type { Watch } from "@/lib/watches";
 import { confidenceFor } from "@/lib/phase1b";
 import { NEWS_MAX_AGE_DAYS, sentimentLabel, WAITLIST_MIN_ANECDOTES, waitlistConfidence, weightedQuantile } from "@/lib/phase2";
+import { matchesRobotsPath } from "@/lib/robots";
 
 type SearchResult = { url: string; title: string };
 type Source = SearchResult & { text: string; domain: string };
@@ -216,7 +217,7 @@ async function allowedByRobots(url: URL) {
   const rank = Math.max(...matching.map((group) => group.agents.includes("crowntracker") ? 2 : 1), 0);
   const rules = matching.filter((group) => (group.agents.includes("crowntracker") ? 2 : 1) === rank).flatMap((group) => group.rules);
   let winner: { allow: boolean; path: string } | undefined;
-  for (const rule of rules) if (pathMatches(rule.path, url.pathname) && (!winner || rule.path.length >= winner.path.length)) winner = rule;
+  for (const rule of rules) if (matchesRobotsPath(rule.path, url.pathname) && (!winner || rule.path.length >= winner.path.length)) winner = rule;
   return winner?.allow ?? true;
 }
 
@@ -307,7 +308,6 @@ function formatMonths(value: number) { return Number.isInteger(value) ? String(v
 function toText(html: string) { return html.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>|<[^>]+>/gi, " ").replace(/\s+/g, " ").trim().slice(0, 100_000); }
 function canonicalUrl(value: string) { const url = new URL(value); url.hash = ""; return url.href.replace(/\/$/, ""); }
 function httpUrl(value: string) { try { const url = new URL(value); return url.protocol === "http:" || url.protocol === "https:"; } catch { return false; } }
-function pathMatches(pattern: string, path: string) { return new RegExp(`^${pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}`).test(path); }
 function parseRobots(robots: string) {
   const groups: Array<{ agents: string[]; rules: Array<{ allow: boolean; path: string }> }> = []; let current: typeof groups[number] | null = null;
   for (const raw of robots.split(/\r?\n/)) {

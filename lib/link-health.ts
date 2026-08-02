@@ -1,5 +1,6 @@
 import type { Pool } from "pg";
 import { LINK_CHECK_MAX_PER_RUN, LINK_CHECK_STALE_DAYS } from "@/lib/phase2";
+import { matchesRobotsPath } from "@/lib/robots";
 
 export type LinkHealthStatus = "reachable" | "offline" | "unreachable" | "blocked_by_robots" | "invalid";
 type Candidate = { evidence_id: string; url: string };
@@ -95,7 +96,7 @@ async function allowedByRobots(url: URL) {
   const rank = Math.max(...matching.map((group) => group.agents.includes("crowntracker") ? 2 : 1), 0);
   const rules = matching.filter((group) => (group.agents.includes("crowntracker") ? 2 : 1) === rank).flatMap((group) => group.rules);
   let winner: { allow: boolean; path: string } | undefined;
-  for (const rule of rules) if (rule.path && pathMatches(rule.path, `${url.pathname}${url.search}`) && (!winner || rule.path.length >= winner.path.length)) winner = rule;
+  for (const rule of rules) if (rule.path && matchesRobotsPath(rule.path, `${url.pathname}${url.search}`) && (!winner || rule.path.length >= winner.path.length)) winner = rule;
   return winner?.allow ?? true;
 }
 
@@ -122,8 +123,4 @@ function parseRobots(robots: string) {
     else if (current) current.rules.push({ allow: directive === "allow", path: value });
   }
   return groups;
-}
-
-function pathMatches(pattern: string, path: string) {
-  return new RegExp(`^${pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}`).test(path);
 }
