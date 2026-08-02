@@ -104,6 +104,12 @@ test("extractListingRows falls back to loose page extraction when allowLoosePage
   assert.equal(rows[0].currency, "USD");
 });
 
+test("extractListingRows reads Open Graph metadata regardless of attribute order", () => {
+  const html = '<meta content="Rolex Daytona for Sale" property="og:title"><body>$28,500</body>';
+  const rows = extractListingRows(html, "https://dealer.example/watch", "Daytona");
+  assert.equal(rows[0].title, "Rolex Daytona for Sale");
+});
+
 test("extractListingRows returns empty when no price found and allowLoosePage is true", () => {
   const html = `<html><body>No price information here</body></html>`;
   const rows = extractListingRows(html, "https://dealer.example/", "Collection", { allowLoosePage: true });

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { Pool } from "pg";
 import type { Watch } from "@/lib/watches";
 import { ACTIVE_LISTING_WINDOW_DAYS, MIN_LISTING_PRICE_TO_RETAIL_RATIO, UNCERTAIN_LISTING_WEIGHT, confidenceFor, isPhase1bEnabled, phase1bConfigurationError, priceReliability } from "@/lib/phase1b";
+import { matchesRobotsPath } from "@/lib/robots";
 
 type Seller = { id: string; name: string; domain: string };
 type DiscoveryResult = { url: string; title: string };
@@ -261,7 +262,6 @@ function parseRobots(robots: string) {
   }
   return groups;
 }
-function matchesRobotsPath(pattern: string, path: string) { return new RegExp(`^${pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\$$/, "$")}`).test(path); }
 
 export function extractListingRows(html: string, pageUrl: string, fallbackTitle: string, options: { allowLoosePage?: boolean; extractScopeAttributes?: boolean } = {}): ListingCandidate[] {
   const { allowLoosePage = true, extractScopeAttributes = true } = options;
@@ -327,12 +327,20 @@ export async function enrichRowsWithClaude(rows: ListingCandidate[], html: strin
 function mergeGroundedAttributes(row: ListingCandidate, extra?: Partial<ListingCandidate>) {
   if (!extra) return row;
   const text = row.groundingSnippet.toLowerCase();
+  const conditionIsGrounded = extra.condition === "unworn"
+    ? /\b(?:unworn|brand new|new)\b/i.test(text)
+    : extra.condition === "pre_owned" && /\b(?:pre[- ]?owned|used)\b/i.test(text);
+  const yearIsGrounded = Number.isInteger(extra.productionYear)
+    && (text.match(/\b(?:19|20)\d{2}\b/g) ?? []).some((year) => Number(year) === extra.productionYear);
+  const warrantyIsGrounded = extra.warranty === "factory"
+    ? /\b(?:factory|manufacturer(?:'s)?|rolex) warranty\b/i.test(text)
+    : extra.warranty === "third_party" && /\bwarranty\b/i.test(text);
   return { ...row,
-    condition: extra.condition && new RegExp(extra.condition === "unworn" ? "unworn|brand new|new" : "pre[- ]?owned|used", "i").test(text) ? extra.condition : row.condition,
-    productionYear: extra.productionYear && new RegExp(`\\b${extra.productionYear}\\b`).test(text) ? extra.productionYear : row.productionYear,
+    condition: conditionIsGrounded ? extra.condition! : row.condition,
+    productionYear: yearIsGrounded ? extra.productionYear! : row.productionYear,
     hasPapers: extra.hasPapers === true && /papers|certificate|full set/i.test(text) ? true : row.hasPapers,
     hasBox: extra.hasBox === true && /box|full set/i.test(text) ? true : row.hasBox,
-    warranty: extra.warranty && new RegExp(extra.warranty === "factory" ? "factory|manufacturer|rolex.*warranty" : "warranty", "i").test(text) ? extra.warranty : row.warranty,
+    warranty: warrantyIsGrounded ? extra.warranty! : row.warranty,
   };
 }
 function mergeDetail(row: ListingCandidate, html: string, detailUrl: string) {
@@ -365,12 +373,16 @@ export function classifyListingIdentity(title: string, groundingSnippet: string,
 }
 
 function hasStandaloneNumericReference(text: string, numericStem: string) {
-  return new RegExp(`(?:^|[^a-z0-9])${numericStem}(?=$|[^a-z0-9])`, "i").test(text);
+  return text.match(/[a-z0-9]+/gi)?.some((token) => token.toLowerCase() === numericStem) ?? false;
 }
 
 function hasConflictingReferenceVariant(text: string, numericStem: string, reference: string) {
-  const variants = text.matchAll(new RegExp(`(?:^|[^a-z0-9])${numericStem}([a-z]+)(?=$|[^a-z0-9])`, "gi"));
-  return [...variants].some((match) => `${numericStem}${match[1].toLowerCase()}` !== reference);
+  return text.match(/[a-z0-9]+/gi)?.some((token) => {
+    const normalized = token.toLowerCase();
+    return normalized.startsWith(numericStem)
+      && /^[a-z]+$/.test(normalized.slice(numericStem.length))
+      && normalized !== reference;
+  }) ?? false;
 }
 
 export function isListingUnavailable(groundingSnippet: string) {
@@ -507,7 +519,16 @@ function sellerForUrl(url: string, sellers: Seller[]) { try { const host = new U
 function resolveUrl(value: string | null, base: string) { try { return value ? new URL(value, base).href : null; } catch { return null; } }
 function canonicalUrl(value: string) { const url = new URL(value); url.hash = ""; for (const key of [...url.searchParams.keys()]) if (/^(utm_|ref$|source$)/i.test(key)) url.searchParams.delete(key); return url.href.replace(/\/$/, ""); }
 function htmlToText(html: string) { return html.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>|<[^>]+>/gi, " ").replace(/\s+/g, " ").trim().slice(0, 100_000); }
-function metaContent(html: string, property: string) { return html.match(new RegExp(`<meta[^>]+(?:property|name)=["']${property}["'][^>]+content=["']([^"']+)`, "i"))?.[1] ?? null; }
+function metaContent(html: string, property: string) {
+  for (const tag of html.matchAll(/<meta\b[^>]*>/gi)) {
+    const attributes = new Map<string, string>();
+    for (const attribute of tag[0].matchAll(/\b([a-z:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi)) {
+      attributes.set(attribute[1].toLowerCase(), attribute[2] ?? attribute[3] ?? attribute[4]);
+    }
+    if ((attributes.get("property") ?? attributes.get("name"))?.toLowerCase() === property.toLowerCase()) return attributes.get("content") ?? null;
+  }
+  return null;
+}
 function stringValue(value: unknown) { return typeof value === "string" && value.trim() ? value.trim() : null; }
 function parseNumber(value: unknown) { const number = Number(String(value ?? "").replace(/[^0-9.]/g, "")); return Number.isFinite(number) ? number : null; }
 function findYear(text: string) { const year = text.match(/\b(?:19|20)\d{2}\b/)?.[0]; return year ? Number(year) : null; }
