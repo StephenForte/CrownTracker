@@ -115,6 +115,10 @@ Email is opt-in. Verify a sending domain in Resend, then set `RESEND_API_KEY`, `
 
 Before enabling it in Render, configure the cron service itself with `DATABASE_URL`, `TAVILY_API_KEY`, `ANTHROPIC_API_KEY`, and an intentional positive `TAVILY_MONTHLY_CREDIT_CAP`. The provider values are required only when one or more sellers are due; the cap is checked in Postgres before every Tavily request. Keep `PHASE1B_ENRICHMENT_ENABLED` false unless you separately choose to enable expanded price research—it is not required by the monthly job. Trigger one manual run and confirm both `seller_research_finished` and `link_check_finished` appear in the logs; a zero-candidate seller result is expected on a clean queue.
 
+## GitHub Actions
+
+Pull requests to `main` run `.github/workflows/security-scans.yml`: **Semgrep SAST** and **Trivy Dependency & Misconfig Scan**. After those jobs have completed once, branch protection can pin them to source **GitHub Actions** instead of Any source. Add repository secret `SEMGREP_APP_TOKEN` so the Semgrep job can authenticate; without it `semgrep ci` fails.
+
 ## Deploy
 
 Connect the repository to Render and apply `render.yaml`. Set `APP_PASSWORD` and `TAVILY_API_KEY`; to enable paid Phase 1B scans, set `PHASE1B_ENRICHMENT_ENABLED=true` together with `TAVILY_MONTHLY_CREDIT_CAP` and `ANTHROPIC_API_KEY` on the web and daily-cron services. Render generates `SESSION_SECRET` and wires `DATABASE_URL`. The first release command should be `npm run db:migrate` (or run it from Render Shell) before using the app. The daily cron runs pricing, Mon/Thu runs chatter and news, and the monthly job refreshes non-curated seller research and link health. Enable alerts only after adding the three Resend variables to every service.
