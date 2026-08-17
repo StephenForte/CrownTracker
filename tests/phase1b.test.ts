@@ -5,6 +5,8 @@ import {
   coverageNoteForDomain,
   freshness,
   isGreyMarketSellerDomain,
+  isUnextractableSellerDomain,
+  nextHostMissCount,
   trustBucket,
   PRICE_STALE_AFTER_HOURS,
   PRICE_OUTDATED_AFTER_HOURS,
@@ -119,10 +121,19 @@ test("trustBucket returns 'High risk' for scores < 50", () => {
   assert.equal(trustBucket(49), "High risk");
 });
 
-test("grey-market seller domains include www hosts and Jomashop coverage is explicit", () => {
+test("grey-market seller domains pin extractable grey hosts, not JS-only catalogs", () => {
   assert.equal(isGreyMarketSellerDomain("davidsw.com"), true);
-  assert.equal(isGreyMarketSellerDomain("www.jomashop.com"), true);
+  assert.equal(isGreyMarketSellerDomain("www.davidsw.com"), true);
+  assert.equal(isGreyMarketSellerDomain("www.jomashop.com"), false);
   assert.equal(isGreyMarketSellerDomain("chrono24.com"), false);
+  assert.equal(isUnextractableSellerDomain("www.jomashop.com"), true);
+  assert.equal(isUnextractableSellerDomain("davidsw.com"), false);
   assert.match(coverageNoteForDomain("www.jomashop.com") ?? "", /JavaScript|JS-only/);
   assert.equal(coverageNoteForDomain("chrono24.com"), null);
+});
+
+test("host miss count resets only after extractable listings, not empty or failed pages", () => {
+  assert.equal(nextHostMissCount(0, false), 1);
+  assert.equal(nextHostMissCount(2, false), 3);
+  assert.equal(nextHostMissCount(2, true), 0);
 });
