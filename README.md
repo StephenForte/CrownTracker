@@ -117,7 +117,7 @@ Before enabling it in Render, configure the cron service itself with `DATABASE_U
 
 ## GitHub Actions
 
-Pull requests to `main` run two workflows. `.github/workflows/ci.yml` posts **typecheck** (`npm run typecheck`). `.github/workflows/security-scans.yml` posts **Semgrep SAST** and **Trivy Dependency & Misconfig Scan**. After a job has completed once, the Main ruleset can pin that exact name to source **GitHub Actions**. Add repository secret `SEMGREP_APP_TOKEN` so the Semgrep job can authenticate; without it `semgrep ci` fails. `patchhog/security` is posted by Patchhog, not Actions.
+Pull requests to `main` run two workflows. `.github/workflows/ci.yml` posts **typecheck** (`next typegen` then `tsc --noEmit`, via `npm run typecheck`). `.github/workflows/security-scans.yml` posts **Semgrep SAST** and **Trivy Dependency & Misconfig Scan**. Trivy uses the action’s built-in workspace cache. After a job has completed once, the Main ruleset can pin that exact name to source **GitHub Actions**. Add repository secret `SEMGREP_APP_TOKEN` so the Semgrep job can authenticate; without it `semgrep ci` fails. `patchhog/security` is posted by Patchhog, not Actions.
 
 ## Deploy
 
