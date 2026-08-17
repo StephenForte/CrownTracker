@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { baseReferenceFallbackQuery, classifyListingIdentity, extractListingRows, iqrRetained, isListingUnavailable, listingConditionFromText, listingPriceSanityReason, prioritizeDiscoveryUrls, priceQueryTemplates, siteScopedDiscoverySellers } from "@/lib/research";
+import { baseReferenceFallbackQuery, classifyListingIdentity, extractListingRows, includeDomainsForDiscoveryQuery, iqrRetained, isListingUnavailable, listingConditionFromText, listingPriceSanityReason, prioritizeDiscoveryUrls, priceQueryTemplates, siteScopedDiscoverySellers } from "@/lib/research";
 import type { Watch } from "@/lib/watches";
 
 test("extractListingRows extracts products from JSON-LD script tags", () => {
@@ -359,6 +359,10 @@ test("site-scoped discovery pins extractable grey dealers and fills remaining sl
   const queries = priceQueryTemplates(watch, sellers);
   assert.ok(queries.some((query) => query.includes("site:davidsw.com")));
   assert.ok(queries.every((query) => !query.includes("site:jomashop.com")));
+  const siteQuery = queries.find((query) => query.startsWith("site:davidsw.com"));
+  assert.ok(siteQuery);
+  assert.deepEqual(includeDomainsForDiscoveryQuery(siteQuery!, sellers), ["davidsw.com"]);
+  assert.deepEqual(includeDomainsForDiscoveryQuery(queries[0], sellers), sellers.map((seller) => seller.domain));
 });
 
 test("discovery URL order round-robins domains and puts extractable grey dealers first", () => {
