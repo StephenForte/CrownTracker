@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   confidenceFor,
+  coverageNoteForDomain,
   freshness,
+  isGreyMarketSellerDomain,
   trustBucket,
   PRICE_STALE_AFTER_HOURS,
   PRICE_OUTDATED_AFTER_HOURS,
@@ -115,4 +117,12 @@ test("trustBucket returns 'High risk' for scores < 50", () => {
   assert.equal(trustBucket(0), "High risk");
   assert.equal(trustBucket(25), "High risk");
   assert.equal(trustBucket(49), "High risk");
+});
+
+test("grey-market seller domains include www hosts and Jomashop coverage is explicit", () => {
+  assert.equal(isGreyMarketSellerDomain("davidsw.com"), true);
+  assert.equal(isGreyMarketSellerDomain("www.jomashop.com"), true);
+  assert.equal(isGreyMarketSellerDomain("chrono24.com"), false);
+  assert.match(coverageNoteForDomain("www.jomashop.com") ?? "", /JavaScript|JS-only/);
+  assert.equal(coverageNoteForDomain("chrono24.com"), null);
 });
