@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { baseReferenceFallbackQuery, classifyListingIdentity, extractListingRows, iqrRetained, isListingUnavailable, listingPriceSanityReason, priceQueryTemplates } from "@/lib/research";
+import { baseReferenceFallbackQuery, classifyListingIdentity, extractListingRows, iqrRetained, isListingUnavailable, listingConditionFromText, listingPriceSanityReason, prioritizeDiscoveryUrls, priceQueryTemplates, siteScopedDiscoverySellers } from "@/lib/research";
 import type { Watch } from "@/lib/watches";
 
 test("extractListingRows extracts products from JSON-LD script tags", () => {
@@ -66,6 +66,26 @@ test("extractListingRows extracts condition from text", () => {
 
   const rowsPreOwned = extractListingRows(htmlPreOwned, "https://dealer.example/", "Watches");
   assert.equal(rowsPreOwned[0].condition, "pre_owned");
+});
+
+test("extractListingRows reads schema.org itemCondition as grey vs resell evidence", () => {
+  const htmlNew = `<script type="application/ld+json">{
+    "@type":"Product","name":"Rolex Daytona","sku":"new-schema",
+    "offers":{"price":"36000","priceCurrency":"USD","itemCondition":"https://schema.org/NewCondition"}
+  }</script>`;
+  assert.equal(extractListingRows(htmlNew, "https://dealer.example/", "Watches")[0].condition, "unworn");
+
+  const htmlUsed = `<script type="application/ld+json">{
+    "@type":"Product","name":"Rolex Daytona","sku":"used-schema",
+    "offers":{"price":"34000","priceCurrency":"USD","itemCondition":"https://schema.org/UsedCondition"}
+  }</script>`;
+  assert.equal(extractListingRows(htmlUsed, "https://dealer.example/", "Watches")[0].condition, "pre_owned");
+
+  const htmlRefurbished = `<script type="application/ld+json">{
+    "@type":"Product","name":"Rolex Daytona","sku":"refurb-schema",
+    "offers":{"price":"34995","priceCurrency":"USD","itemCondition":"https://schema.org/RefurbishedCondition"}
+  }</script>`;
+  assert.equal(extractListingRows(htmlRefurbished, "https://dealer.example/", "Watches")[0].condition, "pre_owned");
 });
 
 test("extractListingRows detects papers/box from description", () => {
@@ -317,10 +337,48 @@ test("expanded price queries use the exact WatchBase variant and stay within fiv
   assert.ok(queries.slice(1).every((query) => query.includes("126503")));
   assert.ok(queries.every((query) => !query.includes(watch.nickname)));
   assert.ok(queries.some((query) => query.includes("site:")));
+  assert.ok(queries.some((query) => query.includes("unworn OR new")));
 
   const letterSuffixQueries = priceQueryTemplates({ ...watch, reference_number: "126610LN" }, sellers);
   assert.ok(letterSuffixQueries[0].includes("126610LN"));
   assert.ok(letterSuffixQueries.slice(1).every((query) => query.includes("126610")));
+});
+
+test("site-scoped discovery pins grey dealers and fills remaining slots from the rotation", () => {
+  const watch = { id: "watch-1", reference_number: "126500LN", model_name: "Rolex Daytona" } as Watch;
+  const sellers = [
+    { id: "chrono", name: "Chrono24", domain: "chrono24.com" },
+    { id: "david", name: "DavidSW", domain: "davidsw.com" },
+    { id: "joma", name: "Jomashop", domain: "jomashop.com" },
+    { id: "bobs", name: "Bobs", domain: "bobswatches.com" },
+  ];
+  const selected = siteScopedDiscoverySellers(watch, sellers);
+  assert.equal(selected.length, 3);
+  assert.deepEqual(selected.slice(0, 2).map((seller) => seller.domain), ["davidsw.com", "jomashop.com"]);
+  assert.ok(["chrono24.com", "bobswatches.com"].includes(selected[2].domain));
+  const queries = priceQueryTemplates(watch, sellers);
+  assert.ok(queries.some((query) => query.includes("site:davidsw.com")));
+  assert.ok(queries.some((query) => query.includes("site:jomashop.com")));
+});
+
+test("discovery URL order round-robins domains and puts grey dealers first", () => {
+  const ranked = prioritizeDiscoveryUrls([
+    { url: "https://www.chrono24.com/a", title: "A" },
+    { url: "https://www.chrono24.com/b", title: "B" },
+    { url: "https://www.chrono24.com/c", title: "C" },
+    { url: "https://davidsw.com/one", title: "Grey" },
+    { url: "https://bobswatches.com/one", title: "Resell" },
+  ]);
+  assert.equal(ranked[0].url, "https://davidsw.com/one");
+  assert.deepEqual(ranked.slice(0, 3).map((result) => new URL(result.url).hostname.replace(/^www\./, "")), ["davidsw.com", "chrono24.com", "bobswatches.com"]);
+});
+
+test("listingConditionFromText accepts schema.org and dealer grey vocabulary", () => {
+  assert.equal(listingConditionFromText('{"itemCondition":"https://schema.org/NewCondition"}'), "unworn");
+  assert.equal(listingConditionFromText("never worn full set"), "unworn");
+  assert.equal(listingConditionFromText("NWBIG Rolex"), "unworn");
+  assert.equal(listingConditionFromText('{"itemCondition":"UsedCondition"}'), "pre_owned");
+  assert.equal(listingConditionFromText("Beautiful timepiece"), null);
 });
 
 test("base-reference fallback only applies to a subvariant", () => {

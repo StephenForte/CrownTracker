@@ -8,5 +8,5 @@
   { "name": "Luxury Bazaar", "domain": "luxurybazaar.com", "platform": "Dealer", "jurisdiction": "US", "trustScore": 88 },
   { "name": "European Watch Company", "domain": "europeanwatch.com", "platform": "Dealer", "jurisdiction": "US", "trustScore": 90 },
   { "name": "DavidSW", "domain": "davidsw.com", "platform": "Dealer", "jurisdiction": "US", "trustScore": 92 },
-  { "name": "Jomashop", "domain": "jomashop.com", "platform": "Dealer", "jurisdiction": "US", "trustScore": 82 }
+  { "name": "Jomashop", "domain": "jomashop.com", "platform": "Dealer", "jurisdiction": "US", "trustScore": 82, "coverageNote": "JS-only product pages with no extractable HTML or JSON-LD; listings cannot be retained without a browser." }
 ]

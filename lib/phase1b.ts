@@ -11,6 +11,25 @@ export const MIN_CONFIRMED_LISTINGS_FOR_PRICE = 3;
 // A price below this fraction of a saved retail price is overwhelmingly likely
 // to be a deposit, payment, part, or extraction error rather than a watch ask.
 export const MIN_LISTING_PRICE_TO_RETAIL_RATIO = 0.2;
+export const PHASE1A_PAGE_FETCH_LIMIT = 10;
+export const PHASE1B_PAGE_FETCH_LIMIT = 32;
+// After this many failed fetches on one host in a run, skip remaining URLs
+// from that host so a 403ing marketplace cannot consume the page budget.
+export const HOST_FETCH_MISSES_BEFORE_SKIP = 3;
+export const GREY_MARKET_SELLER_DOMAINS = ["davidsw.com", "jomashop.com"] as const;
+export const SELLER_COVERAGE_NOTES: Record<string, string> = {
+  "jomashop.com": "JS-only product pages with no extractable HTML or JSON-LD; listings cannot be retained without a browser.",
+};
+
+export function isGreyMarketSellerDomain(domain: string) {
+  const host = domain.toLowerCase();
+  return GREY_MARKET_SELLER_DOMAINS.some((grey) => host === grey || host.endsWith(`.${grey}`));
+}
+
+export function coverageNoteForDomain(domain: string) {
+  const host = domain.toLowerCase().replace(/^www\./, "");
+  return SELLER_COVERAGE_NOTES[host] ?? null;
+}
 
 /**
  * Phase 1B changes the network, provider-cost, and data-quality contract. It

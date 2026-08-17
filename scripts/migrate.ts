@@ -6,7 +6,7 @@ import { Pool } from "pg";
 config({ path: ".env.local" });
 config();
 
-type Seller = { name: string; domain: string; platform: string; jurisdiction: string; trustScore: number };
+type Seller = { name: string; domain: string; platform: string; jurisdiction: string; trustScore: number; coverageNote?: string };
 type Jurisdiction = { code: string; modifier: number; note: string };
 
 async function main() {

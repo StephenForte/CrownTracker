@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Pool } from "pg";
 import type { Watch } from "@/lib/watches";
-import { ACTIVE_LISTING_WINDOW_DAYS, MIN_LISTING_PRICE_TO_RETAIL_RATIO, UNCERTAIN_LISTING_WEIGHT, confidenceFor, isPhase1bEnabled, phase1bConfigurationError, priceReliability } from "@/lib/phase1b";
+import { ACTIVE_LISTING_WINDOW_DAYS, HOST_FETCH_MISSES_BEFORE_SKIP, MIN_LISTING_PRICE_TO_RETAIL_RATIO, PHASE1A_PAGE_FETCH_LIMIT, PHASE1B_PAGE_FETCH_LIMIT, UNCERTAIN_LISTING_WEIGHT, confidenceFor, isGreyMarketSellerDomain, isPhase1bEnabled, phase1bConfigurationError, priceReliability } from "@/lib/phase1b";
 import { matchesRobotsPath } from "@/lib/robots";
 
 type Seller = { id: string; name: string; domain: string };
@@ -31,20 +31,38 @@ export async function researchWatch(pool: Pool, watch: Watch, runId: string) {
   let discovery = await discoverListings(pool, watch, sellers, phase1b);
   const fxRates = phase1b ? await getUsdRates() : { USD: 1 };
   const seenUrls = new Set<string>();
+  const fetchMissesByHost = new Map<string, number>();
+  const skippedHosts = new Set<string>();
   let pagesRead = 0, savedListings = 0, scopeMatchedListings = 0, groundingDrops = 0;
   const scopeExclusions = new Map<string, number>();
 
   const ingestResults = async (results: DiscoveryResult[]) => {
-    const allowedResults = results.filter((result) => sellerForUrl(result.url, sellers)).slice(0, phase1b ? 32 : 10);
+    const allowedResults = prioritizeDiscoveryUrls(results.filter((result) => sellerForUrl(result.url, sellers)));
+    let fetchAttempts = 0;
+    const fetchLimit = phase1b ? PHASE1B_PAGE_FETCH_LIMIT : PHASE1A_PAGE_FETCH_LIMIT;
     for (const result of allowedResults) {
+      if (fetchAttempts >= fetchLimit) break;
       const key = canonicalUrl(result.url);
       if (seenUrls.has(key)) continue;
       seenUrls.add(key);
       try {
         const seller = sellerForUrl(result.url, sellers);
         if (!seller) continue;
+        const misses = fetchMissesByHost.get(seller.domain) ?? 0;
+        if (misses >= HOST_FETCH_MISSES_BEFORE_SKIP) {
+          if (!skippedHosts.has(seller.domain)) {
+            skippedHosts.add(seller.domain);
+            console.warn(JSON.stringify({ event: "listing_host_fetch_budget_exceeded", watchId: watch.id, host: seller.domain, misses }));
+          }
+          continue;
+        }
+        fetchAttempts += 1;
         const html = await fetchAllowedPage(result.url, sellers);
-        if (!html) continue;
+        if (!html) {
+          fetchMissesByHost.set(seller.domain, misses + 1);
+          continue;
+        }
+        fetchMissesByHost.set(seller.domain, 0);
         pagesRead += 1;
         let candidates = extractListingRows(html, result.url, result.title, { allowLoosePage: phase1b, extractScopeAttributes: phase1b });
         // Haiku adds row-level classification hints, but every retained value still
@@ -163,11 +181,53 @@ function needsDetailEnrichment(row: ListingCandidate, watch: Watch) {
 export function priceQueryTemplates(watch: Watch, sellers: Seller[]) {
   const exactIdentity = researchIdentity(watch);
   const broaderIdentity = researchIdentity({ ...watch, reference_number: discoveryReference(watch.reference_number) });
-  const rotation = [...sellers].sort((a, b) => stableHash(`${watch.id}:${a.domain}`) - stableHash(`${watch.id}:${b.domain}`)).slice(0, 3);
   return [
-    `${exactIdentity} for sale`, `${broaderIdentity} asking price`,
-    ...rotation.map((seller) => `site:${seller.domain} ${broaderIdentity} for sale`),
+    `${exactIdentity} for sale`,
+    `${broaderIdentity} unworn OR new asking price`,
+    ...siteScopedDiscoverySellers(watch, sellers).map((seller) => `site:${seller.domain} ${broaderIdentity} for sale`),
   ];
+}
+
+export function siteScopedDiscoverySellers(watch: Pick<Watch, "id">, sellers: Seller[]) {
+  const grey = sellers.filter((seller) => isGreyMarketSellerDomain(seller.domain));
+  const others = sellers
+    .filter((seller) => !isGreyMarketSellerDomain(seller.domain))
+    .sort((a, b) => stableHash(`${watch.id}:${a.domain}`) - stableHash(`${watch.id}:${b.domain}`));
+  return [...grey, ...others].slice(0, 3);
+}
+
+export function prioritizeDiscoveryUrls(results: DiscoveryResult[]) {
+  const groups = new Map<string, DiscoveryResult[]>();
+  const order: string[] = [];
+  for (const result of results) {
+    const host = discoveryHostKey(result.url);
+    if (!groups.has(host)) {
+      groups.set(host, []);
+      order.push(host);
+    }
+    groups.get(host)!.push(result);
+  }
+  const ranked = [...order].sort((a, b) => {
+    const greyDelta = Number(isGreyMarketSellerDomain(b)) - Number(isGreyMarketSellerDomain(a));
+    return greyDelta || order.indexOf(a) - order.indexOf(b);
+  });
+  const queues = ranked.map((host) => groups.get(host) ?? []);
+  const selected: DiscoveryResult[] = [];
+  while (queues.some((queue) => queue.length)) {
+    for (const queue of queues) {
+      const next = queue.shift();
+      if (next) selected.push(next);
+    }
+  }
+  return selected;
+}
+
+function discoveryHostKey(url: string) {
+  try {
+    return new URL(url).hostname.toLowerCase().replace(/^www\./, "");
+  } catch {
+    return url;
+  }
 }
 
 export function baseReferenceFallbackQuery(watch: Pick<Watch, "reference_number" | "model_name">) {
@@ -288,7 +348,7 @@ function candidateFromProduct(product: Record<string, unknown>, pageUrl: string,
   if (!offer || !price || !currency) return null;
   const title = stringValue(product.name) ?? "Untitled listing";
   const detailUrl = resolveUrl(stringValue(product.url) ?? stringValue(offer.url), pageUrl);
-  const text = JSON.stringify({ name: title, offers: offer, sku: product.sku, description: product.description }).slice(0, 2048);
+  const text = JSON.stringify({ name: title, offers: offer, sku: product.sku, description: product.description, itemCondition: product.itemCondition }).slice(0, 2048);
   return listingFromText({ title, sourceUrl: pageUrl, detailUrl, stableSku: stringValue(product.sku) ?? stringValue(product.mpn), priceOriginal: price, currency, text }, extractScopeAttributes);
 }
 function candidateFromLoosePage(html: string, pageUrl: string, fallbackTitle: string, extractScopeAttributes: boolean): ListingCandidate | null {
@@ -298,7 +358,15 @@ function candidateFromLoosePage(html: string, pageUrl: string, fallbackTitle: st
 }
 function listingFromText(input: { title: string; sourceUrl: string; detailUrl: string | null; stableSku: string | null; priceOriginal: number; currency: string; text: string }, extractScopeAttributes: boolean): ListingCandidate {
   const text = `${input.title} ${input.text}`.toLowerCase();
-  return { ...input, groundingSnippet: input.text.slice(0, 2048), productionYear: extractScopeAttributes ? findYear(text) : null, hasPapers: /\b(with )?(papers|certificate|full set)\b/.test(text) ? true : null, hasBox: /\b(with )?box\b|\bfull set\b/.test(text) ? true : null, condition: /\b(unworn|brand new|new)\b/.test(text) ? "unworn" : /\b(pre[- ]?owned|used)\b/.test(text) ? "pre_owned" : null, warranty: extractScopeAttributes ? (/\b(factory|manufacturer(?:'s)?|rolex) warranty\b/.test(text) ? "factory" : /\bwarranty\b/.test(text) ? "third_party" : null) : null };
+  return { ...input, groundingSnippet: input.text.slice(0, 2048), productionYear: extractScopeAttributes ? findYear(text) : null, hasPapers: /\b(with )?(papers|certificate|full set)\b/.test(text) ? true : null, hasBox: /\b(with )?box\b|\bfull set\b/.test(text) ? true : null, condition: listingConditionFromText(text), warranty: extractScopeAttributes ? (/\b(factory|manufacturer(?:'s)?|rolex) warranty\b/.test(text) ? "factory" : /\bwarranty\b/.test(text) ? "third_party" : null) : null };
+}
+
+export function listingConditionFromText(text: string) {
+  const value = text.toLowerCase();
+  if (/(?:schema\.org\/)?(?:brand)?newcondition\b/.test(value) || /\b(?:unworn|never worn|nwbig|brand[ -]?new)\b/.test(value)) return "unworn";
+  if (/(?:schema\.org\/)?(?:used|refurbished|damaged)condition\b/.test(value) || /\b(?:pre[- ]?owned|used)\b/.test(value)) return "pre_owned";
+  if (/\bnew\b/.test(value)) return "unworn";
+  return null;
 }
 function dedupeRows(rows: ListingCandidate[]) { const unique = new Map<string, ListingCandidate>(); for (const row of rows) unique.set(row.stableSku ?? canonicalUrl(row.detailUrl ?? row.sourceUrl), row); return [...unique.values()]; }
 function findOffer(product: Record<string, unknown>) { const offers = product.offers, offer = Array.isArray(offers) ? offers[0] : offers; return offer && typeof offer === "object" ? offer as Record<string, unknown> : null; }
@@ -327,9 +395,8 @@ export async function enrichRowsWithClaude(rows: ListingCandidate[], html: strin
 function mergeGroundedAttributes(row: ListingCandidate, extra?: Partial<ListingCandidate>) {
   if (!extra) return row;
   const text = row.groundingSnippet.toLowerCase();
-  const conditionIsGrounded = extra.condition === "unworn"
-    ? /\b(?:unworn|brand new|new)\b/i.test(text)
-    : extra.condition === "pre_owned" && /\b(?:pre[- ]?owned|used)\b/i.test(text);
+  const evidence = listingConditionFromText(text);
+  const conditionIsGrounded = extra.condition != null && extra.condition === evidence;
   const yearIsGrounded = Number.isInteger(extra.productionYear)
     && (text.match(/\b(?:19|20)\d{2}\b/g) ?? []).some((year) => Number(year) === extra.productionYear);
   const warrantyIsGrounded = extra.warranty === "factory"

@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { ACTIVE_LISTING_WINDOW_DAYS } from "@/lib/phase1b";
+import { ACTIVE_LISTING_WINDOW_DAYS, coverageNoteForDomain } from "@/lib/phase1b";
 
 export type MetricSnapshot = {
   id: string; metric: "grey_avg" | "resell_avg" | "availability" | "waitlist" | "sentiment"; value: string | null; value_low: string | null; value_high: string | null;
@@ -16,7 +16,7 @@ export type MovingAverage = { value: string | null; weeks: number; hasFullYear: 
 export type CommunityAnecdote = { id: string; source_url: string; domain: string; quote: string; reported_at: Date | null; wait_months: string | null; region: string | null; purchase_context: string | null; retrieved_at: Date };
 export type NewsItem = { id: string; source_url: string; domain: string; title: string; summary: string; quote: string; published_at: Date | null; retrieved_at: Date };
 export type ScopeChange = { id: string; changed_at: Date; old_scope: Record<string, unknown>; new_scope: Record<string, unknown> };
-export type SourceCoverage = { domain: string; curated: boolean; active_listings: number; watches_observed: number; last_seen_at: Date | null; evidence_items: number; last_link_status: Evidence["link_status"]; last_link_checked_at: Date | null };
+export type SourceCoverage = { domain: string; curated: boolean; active_listings: number; watches_observed: number; last_seen_at: Date | null; evidence_items: number; last_link_status: Evidence["link_status"]; last_link_checked_at: Date | null; coverageNote: string | null };
 
 export async function getLatestMetrics(watchIds: string[]) {
   const metrics = new Map<string, Map<MetricSnapshot["metric"], MetricSnapshot>>();
@@ -94,11 +94,12 @@ export async function getMarketDetails(watchId: string) {
 /**
  * A transparent observed-coverage report: it describes what the pipeline has
  * actually retained, rather than claiming a source was crawled successfully.
- * Failed page fetches remain visible in runs; this report avoids guessing why
- * a domain has no observations.
+ * Failed page fetches remain visible in runs. Known extraction limits (for
+ * example a JavaScript-only catalog) are attached from curated notes, not
+ * inferred from a zero listing count.
  */
 export async function getSourceCoverageReport() {
-  const result = await db.query<SourceCoverage>(
+  const result = await db.query<Omit<SourceCoverage, "coverageNote">>(
     `WITH listing_coverage AS (
        SELECT COALESCE(s.domain, lower(split_part(regexp_replace(l.source_url, '^https?://', ''), '/', 1))) AS domain,
          COALESCE(bool_or(s.curated), false) AS curated, count(*) FILTER (WHERE l.last_seen_at >= now() - interval '30 days')::int AS active_listings,
@@ -121,7 +122,7 @@ export async function getSourceCoverageReport() {
        FROM domains d LEFT JOIN listing_coverage l ON l.domain = d.domain LEFT JOIN evidence_coverage e ON e.domain = d.domain
        LEFT JOIN sellers s ON s.domain = d.domain ORDER BY l.last_seen_at DESC NULLS LAST, d.domain`,
   );
-  return result.rows;
+  return result.rows.map((row) => ({ ...row, coverageNote: coverageNoteForDomain(row.domain) }));
 }
 
 const NEWS_WINDOW_DAYS = 30;
