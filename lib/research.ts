@@ -145,7 +145,7 @@ async function discoverListings(pool: Pool, watch: Watch, sellers: Seller[], exp
     await reserveSearchCredit(pool, expanded ? 2 : 1);
     const response = await fetch("https://api.tavily.com/search", {
       method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ query, search_depth: expanded ? "advanced" : "basic", max_results: expanded ? 12 : 20, include_answer: false, include_domains: sellers.map((seller) => seller.domain) }),
+      body: JSON.stringify({ query, search_depth: expanded ? "advanced" : "basic", max_results: expanded ? 12 : 20, include_answer: false, include_domains: includeDomainsForDiscoveryQuery(query, sellers) }),
       signal: AbortSignal.timeout(20_000),
     });
     if (!response.ok) throw new Error(`Tavily discovery failed with HTTP ${response.status}.`);
@@ -213,6 +213,18 @@ export function siteScopedDiscoverySellers(watch: Pick<Watch, "id">, sellers: Se
     .filter((seller) => !isGreyMarketSellerDomain(seller.domain) && !isUnextractableSellerDomain(seller.domain))
     .sort((a, b) => stableHash(`${watch.id}:${a.domain}`) - stableHash(`${watch.id}:${b.domain}`));
   return [...grey, ...others].slice(0, 3);
+}
+
+export function includeDomainsForDiscoveryQuery(query: string, sellers: Seller[]) {
+  // Tavily's include_domains allowlist overrides a site: operator. A site-scoped
+  // query sent with every curated host never returns the pinned dealer.
+  const siteHost = query.match(/^site:(\S+)/i)?.[1]?.toLowerCase();
+  if (!siteHost) return sellers.map((seller) => seller.domain);
+  const seller = sellers.find((candidate) => {
+    const domain = candidate.domain.toLowerCase();
+    return siteHost === domain || siteHost.endsWith(`.${domain}`);
+  });
+  return [seller?.domain ?? siteHost];
 }
 
 export function prioritizeDiscoveryUrls(results: DiscoveryResult[]) {
