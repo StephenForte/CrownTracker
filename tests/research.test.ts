@@ -344,7 +344,7 @@ test("expanded price queries use the exact WatchBase variant and stay within fiv
   assert.ok(letterSuffixQueries.slice(1).every((query) => query.includes("126610")));
 });
 
-test("site-scoped discovery pins grey dealers and fills remaining slots from the rotation", () => {
+test("site-scoped discovery pins extractable grey dealers and fills remaining slots from the rotation", () => {
   const watch = { id: "watch-1", reference_number: "126500LN", model_name: "Rolex Daytona" } as Watch;
   const sellers = [
     { id: "chrono", name: "Chrono24", domain: "chrono24.com" },
@@ -354,23 +354,25 @@ test("site-scoped discovery pins grey dealers and fills remaining slots from the
   ];
   const selected = siteScopedDiscoverySellers(watch, sellers);
   assert.equal(selected.length, 3);
-  assert.deepEqual(selected.slice(0, 2).map((seller) => seller.domain), ["davidsw.com", "jomashop.com"]);
-  assert.ok(["chrono24.com", "bobswatches.com"].includes(selected[2].domain));
+  assert.equal(selected[0].domain, "davidsw.com");
+  assert.ok(selected.every((seller) => seller.domain !== "jomashop.com"));
   const queries = priceQueryTemplates(watch, sellers);
   assert.ok(queries.some((query) => query.includes("site:davidsw.com")));
-  assert.ok(queries.some((query) => query.includes("site:jomashop.com")));
+  assert.ok(queries.every((query) => !query.includes("site:jomashop.com")));
 });
 
-test("discovery URL order round-robins domains and puts grey dealers first", () => {
+test("discovery URL order round-robins domains and puts extractable grey dealers first", () => {
   const ranked = prioritizeDiscoveryUrls([
     { url: "https://www.chrono24.com/a", title: "A" },
     { url: "https://www.chrono24.com/b", title: "B" },
     { url: "https://www.chrono24.com/c", title: "C" },
+    { url: "https://www.jomashop.com/one", title: "JS shell" },
     { url: "https://davidsw.com/one", title: "Grey" },
     { url: "https://bobswatches.com/one", title: "Resell" },
   ]);
   assert.equal(ranked[0].url, "https://davidsw.com/one");
-  assert.deepEqual(ranked.slice(0, 3).map((result) => new URL(result.url).hostname.replace(/^www\./, "")), ["davidsw.com", "chrono24.com", "bobswatches.com"]);
+  assert.ok(ranked.findIndex((result) => result.url.includes("jomashop.com")) > 0);
+  assert.deepEqual(ranked.slice(0, 4).map((result) => new URL(result.url).hostname.replace(/^www\./, "")), ["davidsw.com", "chrono24.com", "jomashop.com", "bobswatches.com"]);
 });
 
 test("listingConditionFromText accepts schema.org and dealer grey vocabulary", () => {

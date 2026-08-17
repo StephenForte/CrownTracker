@@ -13,10 +13,11 @@ export const MIN_CONFIRMED_LISTINGS_FOR_PRICE = 3;
 export const MIN_LISTING_PRICE_TO_RETAIL_RATIO = 0.2;
 export const PHASE1A_PAGE_FETCH_LIMIT = 10;
 export const PHASE1B_PAGE_FETCH_LIMIT = 32;
-// After this many failed fetches on one host in a run, skip remaining URLs
-// from that host so a 403ing marketplace cannot consume the page budget.
+// After this many failed fetches, empty extractions, or thrown fetch
+// errors on one host in a run, skip remaining URLs from that host so a
+// 403ing or unreadable marketplace cannot consume the page budget.
 export const HOST_FETCH_MISSES_BEFORE_SKIP = 3;
-export const GREY_MARKET_SELLER_DOMAINS = ["davidsw.com", "jomashop.com"] as const;
+export const GREY_MARKET_SELLER_DOMAINS = ["davidsw.com"] as const;
 export const SELLER_COVERAGE_NOTES: Record<string, string> = {
   "jomashop.com": "JS-only product pages with no extractable HTML or JSON-LD; listings cannot be retained without a browser.",
 };
@@ -29,6 +30,14 @@ export function isGreyMarketSellerDomain(domain: string) {
 export function coverageNoteForDomain(domain: string) {
   const host = domain.toLowerCase().replace(/^www\./, "");
   return SELLER_COVERAGE_NOTES[host] ?? null;
+}
+
+export function isUnextractableSellerDomain(domain: string) {
+  return coverageNoteForDomain(domain) !== null;
+}
+
+export function nextHostMissCount(previousMisses: number, yieldedExtractableListings: boolean) {
+  return yieldedExtractableListings ? 0 : previousMisses + 1;
 }
 
 /**

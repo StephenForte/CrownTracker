@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Pool } from "pg";
 import type { Watch } from "@/lib/watches";
-import { ACTIVE_LISTING_WINDOW_DAYS, HOST_FETCH_MISSES_BEFORE_SKIP, MIN_LISTING_PRICE_TO_RETAIL_RATIO, PHASE1A_PAGE_FETCH_LIMIT, PHASE1B_PAGE_FETCH_LIMIT, UNCERTAIN_LISTING_WEIGHT, confidenceFor, isGreyMarketSellerDomain, isPhase1bEnabled, phase1bConfigurationError, priceReliability } from "@/lib/phase1b";
+import { ACTIVE_LISTING_WINDOW_DAYS, HOST_FETCH_MISSES_BEFORE_SKIP, MIN_LISTING_PRICE_TO_RETAIL_RATIO, PHASE1A_PAGE_FETCH_LIMIT, PHASE1B_PAGE_FETCH_LIMIT, UNCERTAIN_LISTING_WEIGHT, confidenceFor, isGreyMarketSellerDomain, isPhase1bEnabled, isUnextractableSellerDomain, nextHostMissCount, phase1bConfigurationError, priceReliability } from "@/lib/phase1b";
 import { matchesRobotsPath } from "@/lib/robots";
 
 type Seller = { id: string; name: string; domain: string };
@@ -48,6 +48,7 @@ export async function researchWatch(pool: Pool, watch: Watch, runId: string) {
       try {
         const seller = sellerForUrl(result.url, sellers);
         if (!seller) continue;
+        if (isUnextractableSellerDomain(seller.domain)) continue;
         const misses = fetchMissesByHost.get(seller.domain) ?? 0;
         if (misses >= HOST_FETCH_MISSES_BEFORE_SKIP) {
           if (!skippedHosts.has(seller.domain)) {
@@ -57,17 +58,35 @@ export async function researchWatch(pool: Pool, watch: Watch, runId: string) {
           continue;
         }
         fetchAttempts += 1;
-        const html = await fetchAllowedPage(result.url, sellers);
-        if (!html) {
-          fetchMissesByHost.set(seller.domain, misses + 1);
+        let html: string | null = null;
+        try {
+          html = await fetchAllowedPage(result.url, sellers);
+        } catch (error) {
+          fetchMissesByHost.set(seller.domain, nextHostMissCount(misses, false));
+          console.warn(JSON.stringify({ event: "listing_page_skipped", watchId: watch.id, url: result.url, error: errorMessage(error) }));
           continue;
         }
-        fetchMissesByHost.set(seller.domain, 0);
+        if (!html) {
+          fetchMissesByHost.set(seller.domain, nextHostMissCount(misses, false));
+          continue;
+        }
         pagesRead += 1;
-        let candidates = extractListingRows(html, result.url, result.title, { allowLoosePage: phase1b, extractScopeAttributes: phase1b });
-        // Haiku adds row-level classification hints, but every retained value still
-        // has to be grounded in the row/detail text below.
-        if (phase1b) candidates = await enrichRowsWithClaude(candidates, html);
+        let candidates: ListingCandidate[] = [];
+        try {
+          candidates = extractListingRows(html, result.url, result.title, { allowLoosePage: phase1b, extractScopeAttributes: phase1b });
+          // Haiku adds row-level classification hints, but every retained value still
+          // has to be grounded in the row/detail text below.
+          if (phase1b) candidates = await enrichRowsWithClaude(candidates, html);
+        } catch (error) {
+          fetchMissesByHost.set(seller.domain, nextHostMissCount(misses, false));
+          console.warn(JSON.stringify({ event: "listing_page_skipped", watchId: watch.id, url: result.url, error: errorMessage(error) }));
+          continue;
+        }
+        if (!candidates.length) {
+          fetchMissesByHost.set(seller.domain, nextHostMissCount(misses, false));
+          continue;
+        }
+        fetchMissesByHost.set(seller.domain, nextHostMissCount(misses, true));
         for (const candidate of candidates) {
           const detail = phase1b && needsDetailEnrichment(candidate, watch) && candidate.detailUrl && canonicalUrl(candidate.detailUrl) !== canonicalUrl(result.url)
             ? await fetchDetail(candidate.detailUrl, sellers)
@@ -191,7 +210,7 @@ export function priceQueryTemplates(watch: Watch, sellers: Seller[]) {
 export function siteScopedDiscoverySellers(watch: Pick<Watch, "id">, sellers: Seller[]) {
   const grey = sellers.filter((seller) => isGreyMarketSellerDomain(seller.domain));
   const others = sellers
-    .filter((seller) => !isGreyMarketSellerDomain(seller.domain))
+    .filter((seller) => !isGreyMarketSellerDomain(seller.domain) && !isUnextractableSellerDomain(seller.domain))
     .sort((a, b) => stableHash(`${watch.id}:${a.domain}`) - stableHash(`${watch.id}:${b.domain}`));
   return [...grey, ...others].slice(0, 3);
 }
