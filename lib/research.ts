@@ -384,10 +384,12 @@ function candidateFromProduct(product: Record<string, unknown>, pageUrl: string,
   return listingFromText({ title, sourceUrl: pageUrl, detailUrl, stableSku: stringValue(product.sku) ?? stringValue(product.mpn), priceOriginal: price, currency, text, structuredCondition: listingConditionFromStructuredValue(product.itemCondition ?? offer.itemCondition) }, extractScopeAttributes);
 }
 function candidateFromLoosePage(html: string, pageUrl: string, fallbackTitle: string, extractScopeAttributes: boolean): ListingCandidate | null {
-  const text = htmlToText(html);
-  const price = parseNumber(metaContent(html, "product:price:amount") ?? metaContent(html, "og:price:amount") ?? itempropContent(html, "price"));
+  const found = loosePagePrice(html);
+  if (!found) return null;
+  const price = parseNumber(found.raw);
   if (!price) return null;
-  return listingFromText({ title: metaContent(html, "og:title") ?? fallbackTitle, sourceUrl: pageUrl, detailUrl: pageUrl, stableSku: null, priceOriginal: price, currency: "USD", text: text.slice(0, 2048) }, extractScopeAttributes);
+  const text = `${found.source} ${found.raw}. ${htmlToText(html)}`.slice(0, 2048);
+  return listingFromText({ title: metaContent(html, "og:title") ?? fallbackTitle, sourceUrl: pageUrl, detailUrl: pageUrl, stableSku: null, priceOriginal: price, currency: "USD", text }, extractScopeAttributes);
 }
 function listingFromText(input: { title: string; sourceUrl: string; detailUrl: string | null; stableSku: string | null; priceOriginal: number; currency: string; text: string; structuredCondition?: "unworn" | "pre_owned" | null }, extractScopeAttributes: boolean): ListingCandidate {
   const text = `${input.title} ${input.text}`.toLowerCase();
@@ -469,7 +471,7 @@ function mergeDetail(row: ListingCandidate, html: string, detailUrl: string) {
   if (!detail) return row;
   return { ...row, detailUrl, groundingSnippet: `${row.groundingSnippet}\n${detail.groundingSnippet}`.slice(0, 2048), condition: detail.condition ?? row.condition, productionYear: detail.productionYear ?? row.productionYear, hasPapers: detail.hasPapers ?? row.hasPapers, hasBox: detail.hasBox ?? row.hasBox, warranty: detail.warranty ?? row.warranty };
 }
-function isPriceGrounded(row: ListingCandidate) { return numericText(row.groundingSnippet).includes(numericText(row.priceOriginal)); }
+export function isPriceGrounded(row: Pick<ListingCandidate, "groundingSnippet" | "priceOriginal">) { return numericText(row.groundingSnippet).includes(numericText(row.priceOriginal)); }
 
 export function classifyListingIdentity(title: string, groundingSnippet: string, watch: Pick<Watch, "reference_number" | "scope">) {
   const text = `${title} ${groundingSnippet}`.toLowerCase();
@@ -650,15 +652,31 @@ function metaContent(html: string, property: string) {
   }
   return null;
 }
+function loosePagePrice(html: string) {
+  const product = metaContent(html, "product:price:amount");
+  if (product) return { raw: product, source: "product:price:amount" };
+  const og = metaContent(html, "og:price:amount");
+  if (og) return { raw: og, source: "og:price:amount" };
+  const itemprop = itempropContent(html, "price");
+  if (itemprop) return { raw: itemprop, source: "itemprop:price" };
+  return null;
+}
 function itempropContent(html: string, itemprop: string) {
-  for (const tag of html.matchAll(/<(?:meta|span|div|p|strong|b|data)\b[^>]*>/gi)) {
+  for (const match of html.matchAll(/<(meta|span|div|p|strong|b|data)\b([^>]*)>/gi)) {
+    const tagName = match[1].toLowerCase();
     const attributes = new Map<string, string>();
-    for (const attribute of tag[0].matchAll(/\b([a-z:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi)) {
+    for (const attribute of match[2].matchAll(/\b([a-z:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi)) {
       attributes.set(attribute[1].toLowerCase(), attribute[2] ?? attribute[3] ?? attribute[4]);
     }
-    if (attributes.get("itemprop")?.toLowerCase() === itemprop.toLowerCase()) {
-      return attributes.get("content") ?? attributes.get("value") ?? null;
-    }
+    if (attributes.get("itemprop")?.toLowerCase() !== itemprop.toLowerCase()) continue;
+    const fromAttr = attributes.get("content") ?? attributes.get("value");
+    if (fromAttr?.trim()) return fromAttr.trim();
+    if (tagName === "meta") continue;
+    const start = match.index! + match[0].length;
+    const close = html.slice(start).match(new RegExp(`</${tagName}\\s*>`, "i"));
+    if (!close || close.index === undefined) continue;
+    const inner = html.slice(start, start + close.index).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+    if (inner) return inner;
   }
   return null;
 }
