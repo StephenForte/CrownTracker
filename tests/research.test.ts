@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { baseReferenceFallbackQuery, classifyListingIdentity, extractListingRows, includeDomainsForDiscoveryQuery, iqrRetained, isLikelyProductListingUrl, isListingUnavailable, listingConditionFromText, listingPriceSanityReason, prioritizeDiscoveryUrls, priceQueryTemplates, siteScopedDiscoverySellers } from "@/lib/research";
+import { baseReferenceFallbackQuery, classifyListingIdentity, extractListingRows, includeDomainsForDiscoveryQuery, iqrRetained, isLikelyProductListingUrl, isListingUnavailable, isPriceGrounded, listingConditionFromText, listingPriceSanityReason, prioritizeDiscoveryUrls, priceQueryTemplates, siteScopedDiscoverySellers } from "@/lib/research";
 import type { Watch } from "@/lib/watches";
 
 test("extractListingRows extracts products from JSON-LD script tags", () => {
@@ -125,6 +125,7 @@ test("extractListingRows falls back to grounded Open Graph price when allowLoose
   assert.equal(rows[0].title, "Rolex Daytona for Sale");
   assert.equal(rows[0].priceOriginal, 28500);
   assert.equal(rows[0].currency, "USD");
+  assert.equal(isPriceGrounded(rows[0]), true);
 });
 
 test("extractListingRows reads Open Graph metadata regardless of attribute order", () => {
@@ -408,6 +409,56 @@ test("collection and brand-index URLs are not treated as product listings", () =
   const html = `<html><body>Rolex Daytona Reference 126500LN Shop watches from $8,000</body></html>`;
   assert.equal(extractListingRows(html, "https://www.luxurybazaar.com/brands/rolex/ref-126500ln", "126500LN", { allowLoosePage: true }).length, 0);
   assert.equal(extractListingRows(html, "https://www.luxurybazaar.com/product/rolex-daytona-white-dial-watch-126500ln-001", "Panda", { allowLoosePage: true }).length, 0);
+});
+
+test("loose meta prices remain grounded when the digits live only in tag attributes", () => {
+  const html = `<html>
+    <head>
+      <meta property="og:title" content="Rolex Daytona for Sale">
+      <meta property="product:price:amount" content="28500">
+    </head>
+    <body>Beautiful watch. Shop from $8,000.</body>
+  </html>`;
+  const rows = extractListingRows(html, "https://dealer.example/watch", "Daytona", { allowLoosePage: true });
+  assert.equal(rows[0].priceOriginal, 28500);
+  assert.equal(isPriceGrounded(rows[0]), true);
+  assert.match(rows[0].groundingSnippet, /28500/);
+});
+
+test("itemprop text nodes are used and empty itemprop tags do not hide a later price", () => {
+  const html = `<html>
+    <head><meta property="og:title" content="Rolex Daytona"></head>
+    <body>
+      <span itemprop="price"></span>
+      <div itemprop="price"><strong>$28,500</strong></div>
+    </body>
+  </html>`;
+  const rows = extractListingRows(html, "https://dealer.example/watch", "Daytona", { allowLoosePage: true });
+  assert.equal(rows[0].priceOriginal, 28500);
+  assert.equal(isPriceGrounded(rows[0]), true);
+});
+
+test("nested same-name tags do not truncate an itemprop price or hide a later one", () => {
+  const nested = `<html>
+    <head><meta property="og:title" content="Rolex Daytona"></head>
+    <body>
+      <div itemprop="price"><div>MSRP</div>$28,500</div>
+    </body>
+  </html>`;
+  const nestedRows = extractListingRows(nested, "https://dealer.example/watch", "Daytona", { allowLoosePage: true });
+  assert.equal(nestedRows[0].priceOriginal, 28500);
+  assert.equal(isPriceGrounded(nestedRows[0]), true);
+
+  const later = `<html>
+    <head><meta property="og:title" content="Rolex Daytona"></head>
+    <body>
+      <div itemprop="price"><div>MSRP</div></div>
+      <span itemprop="price">$28,500</span>
+    </body>
+  </html>`;
+  const laterRows = extractListingRows(later, "https://dealer.example/watch", "Daytona", { allowLoosePage: true });
+  assert.equal(laterRows[0].priceOriginal, 28500);
+  assert.equal(isPriceGrounded(laterRows[0]), true);
 });
 
 test("base-reference fallback only applies to a subvariant", () => {
