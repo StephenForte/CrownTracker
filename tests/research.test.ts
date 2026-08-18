@@ -438,6 +438,29 @@ test("itemprop text nodes are used and empty itemprop tags do not hide a later p
   assert.equal(isPriceGrounded(rows[0]), true);
 });
 
+test("nested same-name tags do not truncate an itemprop price or hide a later one", () => {
+  const nested = `<html>
+    <head><meta property="og:title" content="Rolex Daytona"></head>
+    <body>
+      <div itemprop="price"><div>MSRP</div>$28,500</div>
+    </body>
+  </html>`;
+  const nestedRows = extractListingRows(nested, "https://dealer.example/watch", "Daytona", { allowLoosePage: true });
+  assert.equal(nestedRows[0].priceOriginal, 28500);
+  assert.equal(isPriceGrounded(nestedRows[0]), true);
+
+  const later = `<html>
+    <head><meta property="og:title" content="Rolex Daytona"></head>
+    <body>
+      <div itemprop="price"><div>MSRP</div></div>
+      <span itemprop="price">$28,500</span>
+    </body>
+  </html>`;
+  const laterRows = extractListingRows(later, "https://dealer.example/watch", "Daytona", { allowLoosePage: true });
+  assert.equal(laterRows[0].priceOriginal, 28500);
+  assert.equal(isPriceGrounded(laterRows[0]), true);
+});
+
 test("base-reference fallback only applies to a subvariant", () => {
   assert.equal(baseReferenceFallbackQuery({ reference_number: "126503-0001", model_name: "Rolex Daytona" } as Watch), "Rolex 126503 Rolex Daytona for sale");
   assert.equal(baseReferenceFallbackQuery({ reference_number: "126500LN", model_name: "Rolex Daytona" } as Watch), null);

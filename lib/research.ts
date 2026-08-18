@@ -670,15 +670,30 @@ function itempropContent(html: string, itemprop: string) {
     }
     if (attributes.get("itemprop")?.toLowerCase() !== itemprop.toLowerCase()) continue;
     const fromAttr = attributes.get("content") ?? attributes.get("value");
-    if (fromAttr?.trim()) return fromAttr.trim();
+    if (fromAttr?.trim() && parseNumber(fromAttr)) return fromAttr.trim();
     if (tagName === "meta") continue;
     const start = match.index! + match[0].length;
-    const close = html.slice(start).match(new RegExp(`</${tagName}\\s*>`, "i"));
-    if (!close || close.index === undefined) continue;
-    const inner = html.slice(start, start + close.index).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-    if (inner) return inner;
+    const inner = innerTextUntilBalancedClose(html, start, tagName);
+    if (inner && parseNumber(inner)) return inner;
   }
   return null;
+}
+function innerTextUntilBalancedClose(html: string, start: number, tagName: string) {
+  const finder = new RegExp(`<${tagName}\\b[^>]*>|</${tagName}\\s*>`, "gi");
+  const region = html.slice(start);
+  let depth = 1;
+  let match: RegExpExecArray | null;
+  while ((match = finder.exec(region))) {
+    if (match[0].startsWith("</")) {
+      depth -= 1;
+      if (depth === 0) {
+        return region.slice(0, match.index).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+      }
+      continue;
+    }
+    if (!/\/\s*>$/.test(match[0])) depth += 1;
+  }
+  return "";
 }
 function stringValue(value: unknown) { return typeof value === "string" && value.trim() ? value.trim() : null; }
 function parseNumber(value: unknown) { const number = Number(String(value ?? "").replace(/[^0-9.]/g, "")); return Number.isFinite(number) ? number : null; }
