@@ -42,8 +42,8 @@ test("structured listing fixture preserves distinct row evidence and Phase 1A wi
   assert.deepEqual(rows.map((row) => row.condition), ["unworn", "pre_owned"]);
 });
 
-test("Phase 1A does not turn an unstructured page price into a listing", () => {
+test("unstructured collection chrome is not a listing, even with loose extraction", () => {
   const html = "<html><head><title>Collection</title></head><body>Rolex collection from $27,500</body></html>";
   assert.equal(extractListingRows(html, "https://dealer.example/collection", "Collection", { allowLoosePage: false }).length, 0);
-  assert.equal(extractListingRows(html, "https://dealer.example/collection", "Collection", { allowLoosePage: true }).length, 1);
+  assert.equal(extractListingRows(html, "https://dealer.example/collection", "Collection", { allowLoosePage: true }).length, 0);
 });

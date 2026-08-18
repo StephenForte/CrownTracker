@@ -49,6 +49,7 @@ export async function researchWatch(pool: Pool, watch: Watch, runId: string) {
         const seller = sellerForUrl(result.url, sellers);
         if (!seller) continue;
         if (isUnextractableSellerDomain(seller.domain)) continue;
+        if (!isLikelyProductListingUrl(result.url)) continue;
         const misses = fetchMissesByHost.get(seller.domain) ?? 0;
         if (misses >= HOST_FETCH_MISSES_BEFORE_SKIP) {
           if (!skippedHosts.has(seller.domain)) {
@@ -362,7 +363,7 @@ export function extractListingRows(html: string, pageUrl: string, fallbackTitle:
   }
   const rows = products.map((product) => candidateFromProduct(product, pageUrl, extractScopeAttributes)).filter((row): row is ListingCandidate => Boolean(row));
   if (rows.length) return dedupeRows(rows);
-  if (!allowLoosePage) return [];
+  if (!allowLoosePage || !isLikelyProductListingUrl(pageUrl)) return [];
   const loose = candidateFromLoosePage(html, pageUrl, fallbackTitle, extractScopeAttributes);
   return loose ? [loose] : [];
 }
@@ -379,17 +380,39 @@ function candidateFromProduct(product: Record<string, unknown>, pageUrl: string,
   if (!offer || !price || !currency) return null;
   const title = stringValue(product.name) ?? "Untitled listing";
   const detailUrl = resolveUrl(stringValue(product.url) ?? stringValue(offer.url), pageUrl);
-  const text = JSON.stringify({ name: title, offers: offer, sku: product.sku, description: product.description, itemCondition: product.itemCondition }).slice(0, 2048);
-  return listingFromText({ title, sourceUrl: pageUrl, detailUrl, stableSku: stringValue(product.sku) ?? stringValue(product.mpn), priceOriginal: price, currency, text }, extractScopeAttributes);
+  const text = JSON.stringify({ name: title, offers: offer, sku: product.sku, description: product.description, itemCondition: product.itemCondition ?? offer.itemCondition }).slice(0, 2048);
+  return listingFromText({ title, sourceUrl: pageUrl, detailUrl, stableSku: stringValue(product.sku) ?? stringValue(product.mpn), priceOriginal: price, currency, text, structuredCondition: listingConditionFromStructuredValue(product.itemCondition ?? offer.itemCondition) }, extractScopeAttributes);
 }
 function candidateFromLoosePage(html: string, pageUrl: string, fallbackTitle: string, extractScopeAttributes: boolean): ListingCandidate | null {
-  const text = htmlToText(html), priceText = text.match(/(?:US\$|USD\s?|\$)\s?([\d,]+(?:\.\d{2})?)/i)?.[1], price = parseNumber(priceText);
+  const text = htmlToText(html);
+  const price = parseNumber(metaContent(html, "product:price:amount") ?? metaContent(html, "og:price:amount") ?? itempropContent(html, "price"));
   if (!price) return null;
   return listingFromText({ title: metaContent(html, "og:title") ?? fallbackTitle, sourceUrl: pageUrl, detailUrl: pageUrl, stableSku: null, priceOriginal: price, currency: "USD", text: text.slice(0, 2048) }, extractScopeAttributes);
 }
-function listingFromText(input: { title: string; sourceUrl: string; detailUrl: string | null; stableSku: string | null; priceOriginal: number; currency: string; text: string }, extractScopeAttributes: boolean): ListingCandidate {
+function listingFromText(input: { title: string; sourceUrl: string; detailUrl: string | null; stableSku: string | null; priceOriginal: number; currency: string; text: string; structuredCondition?: "unworn" | "pre_owned" | null }, extractScopeAttributes: boolean): ListingCandidate {
   const text = `${input.title} ${input.text}`.toLowerCase();
-  return { ...input, groundingSnippet: input.text.slice(0, 2048), productionYear: extractScopeAttributes ? findYear(text) : null, hasPapers: /\b(with )?(papers|certificate|full set)\b/.test(text) ? true : null, hasBox: /\b(with )?box\b|\bfull set\b/.test(text) ? true : null, condition: listingConditionFromText(text), warranty: extractScopeAttributes ? (/\b(factory|manufacturer(?:'s)?|rolex) warranty\b/.test(text) ? "factory" : /\bwarranty\b/.test(text) ? "third_party" : null) : null };
+  const { structuredCondition, ...row } = input;
+  return { ...row, groundingSnippet: input.text.slice(0, 2048), productionYear: extractScopeAttributes ? findYear(text) : null, hasPapers: /\b(with )?(papers|certificate|full set)\b/.test(text) ? true : null, hasBox: /\b(with )?box\b|\bfull set\b/.test(text) ? true : null, condition: structuredCondition ?? listingConditionFromText(text), warranty: extractScopeAttributes ? (/\b(factory|manufacturer(?:'s)?|rolex) warranty\b/.test(text) ? "factory" : /\bwarranty\b/.test(text) ? "third_party" : null) : null };
+}
+
+export function isLikelyProductListingUrl(url: string) {
+  try {
+    const path = new URL(url).pathname.toLowerCase();
+    if (/\/(blog|editorial|news|guides?|market-report|grey-market|product-category|archives?)(\/|$)/i.test(path)) return false;
+    if (/\/brands\//.test(path) && !/\/product\//.test(path)) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function listingConditionFromStructuredValue(value: unknown) {
+  const raw = stringValue(value);
+  if (!raw) return null;
+  const normalized = raw.toLowerCase();
+  if (/(?:schema\.org\/)?(?:brand)?newcondition\b/.test(normalized)) return "unworn" as const;
+  if (/(?:schema\.org\/)?(?:used|refurbished|damaged)condition\b/.test(normalized)) return "pre_owned" as const;
+  return null;
 }
 
 export function listingConditionFromText(text: string) {
@@ -624,6 +647,18 @@ function metaContent(html: string, property: string) {
       attributes.set(attribute[1].toLowerCase(), attribute[2] ?? attribute[3] ?? attribute[4]);
     }
     if ((attributes.get("property") ?? attributes.get("name"))?.toLowerCase() === property.toLowerCase()) return attributes.get("content") ?? null;
+  }
+  return null;
+}
+function itempropContent(html: string, itemprop: string) {
+  for (const tag of html.matchAll(/<(?:meta|span|div|p|strong|b|data)\b[^>]*>/gi)) {
+    const attributes = new Map<string, string>();
+    for (const attribute of tag[0].matchAll(/\b([a-z:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi)) {
+      attributes.set(attribute[1].toLowerCase(), attribute[2] ?? attribute[3] ?? attribute[4]);
+    }
+    if (attributes.get("itemprop")?.toLowerCase() === itemprop.toLowerCase()) {
+      return attributes.get("content") ?? attributes.get("value") ?? null;
+    }
   }
   return null;
 }

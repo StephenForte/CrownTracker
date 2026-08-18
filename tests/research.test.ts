@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { baseReferenceFallbackQuery, classifyListingIdentity, extractListingRows, includeDomainsForDiscoveryQuery, iqrRetained, isListingUnavailable, listingConditionFromText, listingPriceSanityReason, prioritizeDiscoveryUrls, priceQueryTemplates, siteScopedDiscoverySellers } from "@/lib/research";
+import { baseReferenceFallbackQuery, classifyListingIdentity, extractListingRows, includeDomainsForDiscoveryQuery, iqrRetained, isLikelyProductListingUrl, isListingUnavailable, listingConditionFromText, listingPriceSanityReason, prioritizeDiscoveryUrls, priceQueryTemplates, siteScopedDiscoverySellers } from "@/lib/research";
 import type { Watch } from "@/lib/watches";
 
 test("extractListingRows extracts products from JSON-LD script tags", () => {
@@ -111,10 +111,13 @@ test("extractListingRows returns null for condition when not specified", () => {
   assert.equal(rows[0].condition, null);
 });
 
-test("extractListingRows falls back to loose page extraction when allowLoosePage is true", () => {
+test("extractListingRows falls back to grounded Open Graph price when allowLoosePage is true", () => {
   const html = `<html>
-    <head><meta property="og:title" content="Rolex Daytona for Sale"></head>
-    <body>Price: $28,500 - Beautiful watch</body>
+    <head>
+      <meta property="og:title" content="Rolex Daytona for Sale">
+      <meta property="product:price:amount" content="28500">
+    </head>
+    <body>Price: $8,000 in page chrome - Beautiful watch</body>
   </html>`;
 
   const rows = extractListingRows(html, "https://dealer.example/watch", "Daytona", { allowLoosePage: true });
@@ -125,9 +128,10 @@ test("extractListingRows falls back to loose page extraction when allowLoosePage
 });
 
 test("extractListingRows reads Open Graph metadata regardless of attribute order", () => {
-  const html = '<meta content="Rolex Daytona for Sale" property="og:title"><body>$28,500</body>';
+  const html = '<meta content="Rolex Daytona for Sale" property="og:title"><meta content="28500" property="product:price:amount"><body>$8,000</body>';
   const rows = extractListingRows(html, "https://dealer.example/watch", "Daytona");
   assert.equal(rows[0].title, "Rolex Daytona for Sale");
+  assert.equal(rows[0].priceOriginal, 28500);
 });
 
 test("extractListingRows returns empty when no price found and allowLoosePage is true", () => {
@@ -296,18 +300,18 @@ test("extractListingRows uses mpn as fallback for sku", () => {
   assert.equal(rows[0].stableSku, "MPN-123");
 });
 
-test("extractListingRows parses various USD price formats", () => {
+test("extractListingRows parses grounded USD price metadata", () => {
   const formats = [
-    { text: "$28,500", expected: 28500 },
-    { text: "USD 28500", expected: 28500 },
-    { text: "US$ 28,500.00", expected: 28500 },
+    { content: "28500", expected: 28500 },
+    { content: "28,500.00", expected: 28500 },
+    { content: "28500.00", expected: 28500 },
   ];
 
-  for (const { text, expected } of formats) {
-    const html = `<html><body>${text}</body></html>`;
-    const rows = extractListingRows(html, "https://dealer.example/", "Watch", { allowLoosePage: true });
-    assert.equal(rows.length, 1, `Should parse: ${text}`);
-    assert.equal(rows[0].priceOriginal, expected, `Expected ${expected} from: ${text}`);
+  for (const { content, expected } of formats) {
+    const html = `<html><head><meta property="product:price:amount" content="${content}"></head><body>$8,000</body></html>`;
+    const rows = extractListingRows(html, "https://dealer.example/watch", "Watch", { allowLoosePage: true });
+    assert.equal(rows.length, 1, `Should parse: ${content}`);
+    assert.equal(rows[0].priceOriginal, expected, `Expected ${expected} from: ${content}`);
   }
 });
 
@@ -385,6 +389,25 @@ test("listingConditionFromText accepts schema.org and dealer grey vocabulary", (
   assert.equal(listingConditionFromText("NWBIG Rolex"), "unworn");
   assert.equal(listingConditionFromText('{"itemCondition":"UsedCondition"}'), "pre_owned");
   assert.equal(listingConditionFromText("Beautiful timepiece"), null);
+});
+
+test("offer itemCondition wins over stray new copy on a used listing", () => {
+  const html = `<script type="application/ld+json">{
+    "@type":"Product","name":"Used White Dial Rolex Daytona Ref 126500 Steel Oyster",
+    "offers":{"price":"38795.00","priceCurrency":"USD","itemCondition":"UsedCondition","availability":"InStock"}
+  }</script>`;
+  const rows = extractListingRows(html, "https://www.bobswatches.com/used-white-dial-rolex-daytona-ref-126500-steel-oyster.html", "Used White Dial");
+  assert.equal(rows[0].condition, "pre_owned");
+});
+
+test("collection and brand-index URLs are not treated as product listings", () => {
+  assert.equal(isLikelyProductListingUrl("https://www.luxurybazaar.com/brands/rolex/ref-126500ln"), false);
+  assert.equal(isLikelyProductListingUrl("https://www.bobswatches.com/rolex-blog/editorial/rolex-daytona-waiting-list.html"), false);
+  assert.equal(isLikelyProductListingUrl("https://www.luxurybazaar.com/product/rolex-daytona-white-dial-watch-126500ln-001"), true);
+  assert.equal(isLikelyProductListingUrl("https://davidsw.com/shop/watch/rolex/rolex-126610ln-submariner-date-41-21"), true);
+  const html = `<html><body>Rolex Daytona Reference 126500LN Shop watches from $8,000</body></html>`;
+  assert.equal(extractListingRows(html, "https://www.luxurybazaar.com/brands/rolex/ref-126500ln", "126500LN", { allowLoosePage: true }).length, 0);
+  assert.equal(extractListingRows(html, "https://www.luxurybazaar.com/product/rolex-daytona-white-dial-watch-126500ln-001", "Panda", { allowLoosePage: true }).length, 0);
 });
 
 test("base-reference fallback only applies to a subvariant", () => {
