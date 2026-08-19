@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { baseReferenceFallbackQuery, classifyListingIdentity, extractListingRows, includeDomainsForDiscoveryQuery, iqrRetained, isLikelyProductListingUrl, isListingUnavailable, isPriceGrounded, listingConditionFromText, listingPriceSanityReason, prioritizeDiscoveryUrls, priceQueryTemplates, siteScopedDiscoverySellers } from "@/lib/research";
+import { baseReferenceFallbackQuery, classifyListingIdentity, extractListingRows, includeDomainsForDiscoveryQuery, iqrRetained, isAskAttributedToListing, isLikelyProductListingUrl, isListingUnavailable, isPriceGrounded, listingAskEligibleForSeries, listingConditionFromText, listingPriceSanityReason, pageHasNoPublicAskingPrice, prioritizeDiscoveryUrls, priceQueryTemplates, siteScopedDiscoverySellers } from "@/lib/research";
 import type { Watch } from "@/lib/watches";
 
 test("extractListingRows extracts products from JSON-LD script tags", () => {
@@ -488,6 +488,64 @@ test("letter-suffixed references may use a bare numeric stem when no conflicting
 test("out-of-stock evidence never counts as a current listing", () => {
   assert.equal(isListingUnavailable('{"offers":{"availability":"https://schema.org/OutOfStock"}}'), true);
   assert.equal(isListingUnavailable('{"offers":{"availability":"InStock"}}'), false);
+  assert.equal(isListingUnavailable('woocommerce-Price-amount">Inquire For Pricing</span>'), true);
+  assert.equal(pageHasNoPublicAskingPrice('{"offers":{"price":"0.00","priceCurrency":"USD"}}'), true);
+  assert.equal(pageHasNoPublicAskingPrice("In stock $28,500"), false);
+});
+
+test("JSON-LD price 0 and inquire CTAs do not inherit related-item chrome prices", () => {
+  const html = `<html>
+    <script type="application/ld+json">{
+      "@type":"Product","name":"Rolex Daytona White Dial Panda Watch 126500LN-0001","sku":"310726",
+      "offers":{"@type":"Offer","price":"0.00","priceCurrency":"USD","availability":"https://schema.org/OutOfStock"}
+    }</script>
+    <span class="woocommerce-Price-amount amount">Inquire For Pricing</span>
+    <a id="inquire-button">Inquire for Pricing</a>
+    <div>New Arrivals Otsuka Lotec No. 7.5 Jumping Hour Steel Watch $8,000 Take a Look</div>
+  </html>`;
+  const url = "https://www.luxurybazaar.com/product/rolex-daytona-white-dial-watch-126500ln-001/";
+  assert.equal(extractListingRows(html, url, "Panda", { allowLoosePage: true }).length, 0);
+});
+
+test("zero-price JSON-LD offers are skipped in favor of a later usable ask", () => {
+  const html = `<script type="application/ld+json">{
+    "@type":"Product","name":"Rolex Daytona","sku":"w-1",
+    "offers":[
+      {"price":"0.00","priceCurrency":"USD","availability":"https://schema.org/OutOfStock"},
+      {"price":"36575","priceCurrency":"USD","availability":"https://schema.org/InStock"}
+    ]
+  }</script>`;
+  const rows = extractListingRows(html, "https://dealer.example/watch", "Daytona");
+  assert.equal(rows[0].priceOriginal, 36575);
+});
+
+test("related-item carousel prices are not attributed to the listing", () => {
+  const panda = {
+    reference_number: "126500LN",
+    retail_price_usd: "16700",
+    scope: { condition: "any" as const, yearMin: null, yearMax: null, papers: "not_required" as const, box: "not_required" as const, warranty: "none_ok" as const, identityTerms: [] },
+  };
+  const carousel = "Rolex Daytona White Dial Panda Watch 126500LN-0001 - 40mm - White - - Skip to content Shop By Brand All Watch Brands Brands A to Z Popular Watch Brands Rolex Audemars Piguet Patek Philippe Cartier Omega Tudor Vacheron Constantin Panerai Featured Collections Daytona Submariner GMT-Master Nautilus Dial Colors Blue Dial Green Dial White Dial Black Dial New Arrivals Rolex Audemars Piguet Patek Philippe Cartier Omega Tudor All New Arrivals Otsuka Lotec No. 7.5 Jumping Hour Steel Watch $8,000 Take a Look Otsuka Lotec Double Retrograde Steel Watch $9,650 Take a Look";
+  assert.equal(isAskAttributedToListing(carousel, "Rolex Daytona White Dial Panda Watch 126500LN-0001", 8000, "126500LN"), false);
+  assert.equal(listingAskEligibleForSeries({
+    source_url: "https://www.luxurybazaar.com/product/rolex-daytona-white-dial-watch-126500ln-001",
+    title: "Rolex Daytona White Dial Panda Watch 126500LN-0001",
+    price_usd: 8000,
+    grounding_snippet: carousel,
+  }, panda), false);
+  assert.equal(listingAskEligibleForSeries({
+    source_url: "https://www.luxurybazaar.com/brands/rolex/ref-126500ln",
+    title: "126500LN",
+    price_usd: 8000,
+    grounding_snippet: "Rolex Daytona Reference 126500LN Skip to content Shop By Brand All Watch Brands Featured Collections Daytona Submariner New Arrivals Rolex Audemars Piguet Patek Philippe Cartier Omega Tudor All New Arrivals Otsuka Lotec No. 7.5 Jumping Hour Steel Watch $8,000 Take a Look",
+  }, panda), false);
+  assert.equal(isAskAttributedToListing(
+    '{"name":"Rolex Daytona White Dial Panda Watch 126500LN-0001","offers":{"price":"36575.00","priceCurrency":"USD"}}',
+    "Rolex Daytona White Dial Panda Watch 126500LN-0001",
+    36575,
+    "126500LN",
+  ), true);
+  assert.equal(isAskAttributedToListing("product:price:amount 28500. Beautiful watch. Shop from $8,000.", "Rolex Daytona for Sale", 28500, "126500LN"), true);
 });
 
 test("IQR filtering retains nearby prices when a mode-heavy sample has zero spread", () => {
