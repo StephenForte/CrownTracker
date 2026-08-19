@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { baseReferenceFallbackQuery, classifyListingIdentity, extractListingRows, includeDomainsForDiscoveryQuery, iqrRetained, isAskAttributedToListing, isLikelyProductListingUrl, isListingUnavailable, isPriceGrounded, listingAskEligibleForSeries, listingConditionFromText, listingPriceSanityReason, pageHasNoPublicAskingPrice, prioritizeDiscoveryUrls, priceQueryTemplates, siteScopedDiscoverySellers } from "@/lib/research";
+import { baseReferenceFallbackQuery, classifyListingIdentity, extractListingRows, includeDomainsForDiscoveryQuery, iqrRetained, isAskAttributedToListing, isLikelyProductListingUrl, isListingUnavailable, isPriceGrounded, listingAskEligibleForSeries, listingConditionFromText, listingPriceSanityReason, listingRowMatchesFetchedUrl, pageHasNoPublicAskingPrice, prioritizeDiscoveryUrls, priceQueryTemplates, siteScopedDiscoverySellers } from "@/lib/research";
 import type { Watch } from "@/lib/watches";
 
 test("extractListingRows extracts products from JSON-LD script tags", () => {
@@ -546,6 +546,37 @@ test("related-item carousel prices are not attributed to the listing", () => {
     "126500LN",
   ), true);
   assert.equal(isAskAttributedToListing("product:price:amount 28500. Beautiful watch. Shop from $8,000.", "Rolex Daytona for Sale", 28500, "126500LN"), true);
+});
+
+test("metric-time attribution uses the original ask, not the USD conversion", () => {
+  const panda = {
+    reference_number: "126500LN",
+    retail_price_usd: "16700",
+    scope: { condition: "any" as const, yearMin: null, yearMax: null, papers: "not_required" as const, box: "not_required" as const, warranty: "none_ok" as const, identityTerms: [] },
+  };
+  const snippet = '{"name":"Rolex Daytona 126500LN","offers":{"price":"28950.00","priceCurrency":"GBP"}}';
+  assert.equal(isAskAttributedToListing(snippet, "Rolex Daytona 126500LN", 37812, "126500LN"), false);
+  assert.equal(isAskAttributedToListing(snippet, "Rolex Daytona 126500LN", 28950, "126500LN"), true);
+  assert.equal(listingAskEligibleForSeries({
+    source_url: "https://www.watchfinder.com/Rolex/Daytona/126500LN/item-gbp",
+    title: "Rolex Daytona 126500LN",
+    price_usd: 37812,
+    price_original: 28950,
+    grounding_snippet: snippet,
+  }, panda), true);
+});
+
+test("inquire reclassify matches stored URLs that still carry tracking params", () => {
+  const stored = {
+    source_url: "https://www.luxurybazaar.com/product/rolex-daytona-white-dial-watch-126500ln-001?utm_source=tavily&utm_medium=search",
+    detail_url: "https://www.luxurybazaar.com/product/rolex-daytona-white-dial-watch-126500ln-001/?ref=ad",
+  };
+  assert.equal(listingRowMatchesFetchedUrl(stored, "https://www.luxurybazaar.com/product/rolex-daytona-white-dial-watch-126500ln-001/"), true);
+  assert.equal(listingRowMatchesFetchedUrl(stored, "https://www.luxurybazaar.com/product/rolex-daytona-white-dial-watch-126500ln-001?utm_source=tavily"), true);
+  assert.equal(listingRowMatchesFetchedUrl(
+    { source_url: "https://www.luxurybazaar.com/product/other-watch", detail_url: null },
+    "https://www.luxurybazaar.com/product/rolex-daytona-white-dial-watch-126500ln-001/",
+  ), false);
 });
 
 test("IQR filtering retains nearby prices when a mode-heavy sample has zero spread", () => {
