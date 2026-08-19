@@ -582,14 +582,15 @@ function priceBoundaryPattern(price: number) {
 }
 
 export function listingAskEligibleForSeries(
-  row: { source_url: string; title: string; price_usd: number | string; grounding_snippet: string },
+  row: { source_url: string; title: string; price_usd: number | string; price_original?: number | string | null; grounding_snippet: string },
   watch: Pick<Watch, "reference_number" | "retail_price_usd" | "scope">,
 ) {
+  const askAmount = Number(row.price_original ?? row.price_usd);
   return isLikelyProductListingUrl(row.source_url)
     && !classifyListingIdentity(row.title, row.grounding_snippet, watch)
     && !listingPriceSanityReason(Number(row.price_usd), watch)
     && !isListingUnavailable(row.grounding_snippet)
-    && isAskAttributedToListing(row.grounding_snippet, row.title, Number(row.price_usd), watch.reference_number);
+    && isAskAttributedToListing(row.grounding_snippet, row.title, askAmount, watch.reference_number);
 }
 
 export function listingPriceSanityReason(priceUsd: number, watch: Pick<Watch, "retail_price_usd">) {
@@ -634,19 +635,29 @@ async function getUsdRates() {
 }
 function normalizeToUsd(amount: number, currency: string, rates: Record<string, number>) { const rate = rates[currency]; return rate && Number.isFinite(rate) ? { value: amount / rate, rate } : null; }
 
+export function listingIdentityUrl(value: string) {
+  try { return canonicalUrl(value); } catch { return value.replace(/\/+$/, ""); }
+}
+
+export function listingRowMatchesFetchedUrl(row: { source_url: string; detail_url?: string | null }, fetchedUrl: string) {
+  const fetched = listingIdentityUrl(fetchedUrl);
+  return listingIdentityUrl(row.source_url) === fetched
+    || (row.detail_url != null && row.detail_url !== "" && listingIdentityUrl(row.detail_url) === fetched);
+}
+
 async function markListingNotCurrentAsk(pool: Pool, watchId: string, pageUrl: string) {
-  let key = pageUrl.replace(/\/+$/, "");
-  try { key = canonicalUrl(pageUrl); } catch { /* Keep the trimmed URL if canonicalization fails. */ }
+  const rows = (await pool.query<{ id: string; source_url: string; detail_url: string | null }>(
+    "SELECT id, source_url, detail_url FROM market_listings WHERE watch_id = $1 AND is_active = true",
+    [watchId],
+  )).rows;
+  const ids = rows.filter((row) => listingRowMatchesFetchedUrl(row, pageUrl)).map((row) => row.id);
+  if (!ids.length) return;
   await pool.query(
     `UPDATE market_listings
      SET scope_match = false, scope_match_class = 'out_of_scope', scope_weight = 0,
          scope_reason = 'Listing has no public asking price.', updated_at = now()
-     WHERE watch_id = $1 AND is_active = true
-       AND (
-         regexp_replace(source_url, '/+$', '') = $2
-         OR regexp_replace(coalesce(detail_url, ''), '/+$', '') = $2
-       )`,
-    [watchId, key],
+     WHERE id = ANY($1::uuid[])`,
+    [ids],
   );
 }
 
@@ -663,8 +674,8 @@ async function saveListing(pool: Pool, runId: string, watchId: string, sellerId:
 }
 
 async function createMetrics(pool: Pool, watch: Watch, runId: string) {
-  const rows = (await pool.query<{ id: string; title: string; price_usd: string; condition: string | null; scope_match_class: ScopeClass; scope_weight: string; seller_domain: string; source_url: string; grounding_snippet: string }>(
-    `SELECT l.id, l.title, l.price_usd, l.condition, l.scope_match_class, l.scope_weight, s.domain AS seller_domain, l.source_url, l.grounding_snippet
+  const rows = (await pool.query<{ id: string; title: string; price_usd: string; price_original: string | null; condition: string | null; scope_match_class: ScopeClass; scope_weight: string; seller_domain: string; source_url: string; grounding_snippet: string }>(
+    `SELECT l.id, l.title, l.price_usd, l.price_original, l.condition, l.scope_match_class, l.scope_weight, s.domain AS seller_domain, l.source_url, l.grounding_snippet
      FROM market_listings l JOIN sellers s ON s.id = l.seller_id
      WHERE l.watch_id = $1 AND l.is_active = true AND l.price_usd IS NOT NULL AND l.scope_match_class IN ('in_scope','uncertain')
        AND l.last_seen_at > now() - ($2 || ' days')::interval`, [watch.id, ACTIVE_LISTING_WINDOW_DAYS],
