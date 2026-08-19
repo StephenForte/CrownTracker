@@ -84,6 +84,10 @@ export async function researchWatch(pool: Pool, watch: Watch, runId: string) {
           continue;
         }
         if (!candidates.length) {
+          if (pageHasNoPublicAskingPrice(html)) {
+            await markListingNotCurrentAsk(pool, watch.id, result.url);
+            continue;
+          }
           fetchMissesByHost.set(seller.domain, nextHostMissCount(misses, false));
           continue;
         }
@@ -93,7 +97,7 @@ export async function researchWatch(pool: Pool, watch: Watch, runId: string) {
             ? await fetchDetail(candidate.detailUrl, sellers)
             : null;
           const enriched = detail ? mergeDetail(candidate, detail.html, detail.url) : candidate;
-          if (!isPriceGrounded(enriched)) { groundingDrops += 1; continue; }
+          if (!isPriceGrounded(enriched) || !isAskAttributedToListing(enriched.groundingSnippet, enriched.title, enriched.priceOriginal, watch.reference_number)) { groundingDrops += 1; continue; }
           const priceUsd = normalizeToUsd(enriched.priceOriginal, enriched.currency, fxRates);
           if (!priceUsd || priceUsd.value < 1_000 || priceUsd.value > 1_000_000) { groundingDrops += 1; continue; }
           const scope = classifyListing(enriched, effectiveWatch, priceUsd.value);
@@ -362,8 +366,10 @@ export function extractListingRows(html: string, pageUrl: string, fallbackTitle:
     try { collectProducts(JSON.parse(match[1]), products); } catch { /* Ignore malformed publisher JSON. */ }
   }
   const rows = products.map((product) => candidateFromProduct(product, pageUrl, extractScopeAttributes)).filter((row): row is ListingCandidate => Boolean(row));
-  if (rows.length) return dedupeRows(rows);
-  if (!allowLoosePage || !isLikelyProductListingUrl(pageUrl)) return [];
+  // A Product node with no usable ask (price 0, inquire, missing offer) is
+  // evidence of no public price. Do not fall through to related-item chrome.
+  if (products.length) return dedupeRows(rows);
+  if (!allowLoosePage || !isLikelyProductListingUrl(pageUrl) || pageHasNoPublicAskingPrice(html)) return [];
   const loose = candidateFromLoosePage(html, pageUrl, fallbackTitle, extractScopeAttributes);
   return loose ? [loose] : [];
 }
@@ -425,7 +431,18 @@ export function listingConditionFromText(text: string) {
   return null;
 }
 function dedupeRows(rows: ListingCandidate[]) { const unique = new Map<string, ListingCandidate>(); for (const row of rows) unique.set(row.stableSku ?? canonicalUrl(row.detailUrl ?? row.sourceUrl), row); return [...unique.values()]; }
-function findOffer(product: Record<string, unknown>) { const offers = product.offers, offer = Array.isArray(offers) ? offers[0] : offers; return offer && typeof offer === "object" ? offer as Record<string, unknown> : null; }
+function findOffer(product: Record<string, unknown>) {
+  const offers = product.offers;
+  const list = Array.isArray(offers) ? offers : offers ? [offers] : [];
+  for (const value of list) {
+    if (!value || typeof value !== "object") continue;
+    const offer = value as Record<string, unknown>;
+    const price = parseNumber(offer.price ?? offer.lowPrice);
+    const currency = stringValue(offer.priceCurrency ?? offer.currency);
+    if (price && price > 0 && currency) return offer;
+  }
+  return null;
+}
 
 export async function enrichRowsWithClaude(rows: ListingCandidate[], html: string, throwOnFailure = false) {
   if (!rows.length) return rows;
@@ -508,10 +525,71 @@ function hasConflictingReferenceVariant(text: string, numericStem: string, refer
   }) ?? false;
 }
 
+export function pageHasNoPublicAskingPrice(text: string) {
+  const value = text.toLowerCase();
+  return /\binquire\s+for\s+pric(?:e|ing)\b/.test(value)
+    || /\bcall\s+(?:us\s+)?for\s+pric(?:e|ing)\b/.test(value)
+    || /\b(?:price\s+on\s+request|request\s+(?:a\s+)?quot(?:e|ation)|contact\s+(?:us\s+)?for\s+(?:a\s+)?(?:price|pricing))\b/.test(value)
+    || /"price"\s*:\s*"?0(?:\.0+)?"?/.test(value);
+}
+
 export function isListingUnavailable(groundingSnippet: string) {
   const text = groundingSnippet.toLowerCase();
   return /"availability"\s*:\s*"[^"\n]*(?:outofstock|soldout)/.test(text)
-    || /\b(?:out\s*-?of\s*-?stock|sold\s*-?out)\b/.test(text);
+    || /\b(?:out\s*-?of\s*-?stock|sold\s*-?out)\b/.test(text)
+    || pageHasNoPublicAskingPrice(groundingSnippet);
+}
+
+const GENERIC_ASK_TITLE_TOKENS = new Set([
+  "rolex", "watch", "watches", "steel", "stainless", "white", "black", "gold", "dial",
+  "mens", "womens", "men", "women", "oyster", "ceramic", "automatic", "date", "timepiece",
+  "sale", "new", "used", "the", "with", "and", "for", "from",
+]);
+
+export function isAskAttributedToListing(snippet: string, title: string, price: number, reference?: string) {
+  const haystack = `${title} ${snippet}`;
+  const tokens = listingAskIdentityTokens(title, reference);
+  if (!tokens.length) return numericText(haystack).includes(numericText(price));
+  const matcher = priceBoundaryPattern(price);
+  let match: RegExpExecArray | null;
+  while ((match = matcher.exec(haystack))) {
+    const window = haystack.slice(Math.max(0, match.index - 80), match.index + match[0].length + 24).toLowerCase();
+    if (tokens.some((token) => window.includes(token))) return true;
+  }
+  return false;
+}
+
+function listingAskIdentityTokens(title: string, reference?: string) {
+  const tokens = new Set<string>();
+  if (reference) {
+    const normalized = reference.toLowerCase();
+    tokens.add(normalized);
+    tokens.add(normalized.replace(/[^a-z0-9]/g, ""));
+    const stem = normalized.split("-")[0];
+    if (stem.length >= 4) tokens.add(stem);
+  }
+  for (const raw of title.toLowerCase().match(/[a-z0-9]+(?:-[a-z0-9]+)*/g) ?? []) {
+    if (raw.length >= 4 && !GENERIC_ASK_TITLE_TOKENS.has(raw)) tokens.add(raw);
+  }
+  return [...tokens];
+}
+
+function priceBoundaryPattern(price: number) {
+  const [intPart, frac] = String(price).split(".");
+  const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  const fraction = frac && Number(frac) !== 0 ? `\\.${frac}` : "(?:\\.00)?";
+  return new RegExp(`(?<![0-9])(?:${grouped}|${intPart})${fraction}(?![0-9])`, "g");
+}
+
+export function listingAskEligibleForSeries(
+  row: { source_url: string; title: string; price_usd: number | string; grounding_snippet: string },
+  watch: Pick<Watch, "reference_number" | "retail_price_usd" | "scope">,
+) {
+  return isLikelyProductListingUrl(row.source_url)
+    && !classifyListingIdentity(row.title, row.grounding_snippet, watch)
+    && !listingPriceSanityReason(Number(row.price_usd), watch)
+    && !isListingUnavailable(row.grounding_snippet)
+    && isAskAttributedToListing(row.grounding_snippet, row.title, Number(row.price_usd), watch.reference_number);
 }
 
 export function listingPriceSanityReason(priceUsd: number, watch: Pick<Watch, "retail_price_usd">) {
@@ -556,6 +634,22 @@ async function getUsdRates() {
 }
 function normalizeToUsd(amount: number, currency: string, rates: Record<string, number>) { const rate = rates[currency]; return rate && Number.isFinite(rate) ? { value: amount / rate, rate } : null; }
 
+async function markListingNotCurrentAsk(pool: Pool, watchId: string, pageUrl: string) {
+  let key = pageUrl.replace(/\/+$/, "");
+  try { key = canonicalUrl(pageUrl); } catch { /* Keep the trimmed URL if canonicalization fails. */ }
+  await pool.query(
+    `UPDATE market_listings
+     SET scope_match = false, scope_match_class = 'out_of_scope', scope_weight = 0,
+         scope_reason = 'Listing has no public asking price.', updated_at = now()
+     WHERE watch_id = $1 AND is_active = true
+       AND (
+         regexp_replace(source_url, '/+$', '') = $2
+         OR regexp_replace(coalesce(detail_url, ''), '/+$', '') = $2
+       )`,
+    [watchId, key],
+  );
+}
+
 async function saveListing(pool: Pool, runId: string, watchId: string, sellerId: string, listing: StoredListing) {
   const identityUrl = listing.detailUrl ?? listing.sourceUrl;
   const result = await pool.query<{ id: string }>(
@@ -575,9 +669,10 @@ async function createMetrics(pool: Pool, watch: Watch, runId: string) {
      WHERE l.watch_id = $1 AND l.is_active = true AND l.price_usd IS NOT NULL AND l.scope_match_class IN ('in_scope','uncertain')
        AND l.last_seen_at > now() - ($2 || ' days')::interval`, [watch.id, ACTIVE_LISTING_WINDOW_DAYS],
   )).rows;
-  // Recheck historical rows here too, so a deployed identity guard immediately
-  // stops old mismatches from contaminating a newly written snapshot.
-  const eligibleRows = rows.filter((row) => !classifyListingIdentity(row.title, row.grounding_snippet, watch) && !listingPriceSanityReason(Number(row.price_usd), watch) && !isListingUnavailable(row.grounding_snippet));
+  // Recheck historical rows here too, so a deployed identity, URL, inquire, or
+  // related-item price guard immediately stops old mismatches from contaminating
+  // a newly written snapshot.
+  const eligibleRows = rows.filter((row) => listingAskEligibleForSeries(row, watch));
   const grey = await savePriceMetric(pool, watch.id, runId, "grey_avg", eligibleRows.filter((row) => row.condition === "unworn"));
   const resell = await savePriceMetric(pool, watch.id, runId, "resell_avg", eligibleRows.filter((row) => row.condition === "pre_owned"));
   await flagAnomalies(pool, watch.id, grey.value, resell.value);
