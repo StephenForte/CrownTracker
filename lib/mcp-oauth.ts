@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
 import type { Pool, PoolClient, QueryResultRow } from "pg";
+import { clientIpBucketKey } from "@/lib/client-ip";
 import { db } from "@/lib/db";
 import {
   MCP_ACCESS_TOKEN_LIFETIME_SECONDS,
@@ -190,12 +191,6 @@ function authorizationError(error: string, description: string): OAuthError {
   return { error, description };
 }
 
-function clientIpBucket(request: Request | null) {
-  const forwarded = request?.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-  const raw = forwarded || request?.headers.get("x-real-ip")?.trim() || "unknown";
-  return hash(raw).slice(0, 24);
-}
-
 function authFailureLockId(bucketKey: string) {
   return createHash("sha256").update(bucketKey).digest().readInt32BE(0);
 }
@@ -296,7 +291,7 @@ export async function registerPublicClient(
 
   // Persist the rate-limit attempt even when registration is rejected so
   // anonymous traffic cannot retry without counting.
-  const registrationBucket = `register:${clientIpBucket(options.request ?? null)}`;
+  const registrationBucket = `register:${clientIpBucketKey(options.request ?? null)}`;
   const allowed = await consumeRateLimit(
     adminPool(),
     registrationBucket,
@@ -379,7 +374,7 @@ export async function validateAuthorizationRequest(search: URLSearchParams): Pro
 }
 
 export async function recordAuthorizationFailure(request: Request | null) {
-  const bucket = `authorize:${clientIpBucket(request)}`;
+  const bucket = `authorize:${clientIpBucketKey(request)}`;
   try {
     return await consumeRateLimit(
       adminPool(),
@@ -394,7 +389,7 @@ export async function recordAuthorizationFailure(request: Request | null) {
 }
 
 export async function authorizationFailureBlocked(request: Request | null) {
-  const bucket = `authorize:${clientIpBucket(request)}`;
+  const bucket = `authorize:${clientIpBucketKey(request)}`;
   const result = await adminPool().query<{ blocked_until: Date | null; attempt_count: number; window_started_at: Date }>(
     "SELECT blocked_until, attempt_count, window_started_at FROM mcp_oauth_rate_limits WHERE bucket_key = $1",
     [bucket],
@@ -415,7 +410,7 @@ export async function completeAuthorizationPasswordAttempt(
   provided: string,
   expected: string,
 ): Promise<"blocked" | "mismatch" | "ok"> {
-  const bucket = `authorize:${clientIpBucket(request)}`;
+  const bucket = `authorize:${clientIpBucketKey(request)}`;
   const connection = await adminPool().connect();
   try {
     await connection.query("BEGIN");
@@ -454,7 +449,7 @@ export async function completeAuthorizationPasswordAttempt(
 }
 
 export async function clearAuthorizationFailures(request: Request | null) {
-  await clearRateLimit(adminPool(), `authorize:${clientIpBucket(request)}`);
+  await clearRateLimit(adminPool(), `authorize:${clientIpBucketKey(request)}`);
 }
 
 export async function createAuthorizationCode(request: AuthorizationRequest) {
