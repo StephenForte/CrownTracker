@@ -31,7 +31,7 @@ npm run pipeline -- --tier=daily
 
 Phase 1B’s expanded price scan requires all three of `PHASE1B_ENRICHMENT_ENABLED=true`, `ANTHROPIC_API_KEY`, and an intentional positive `TAVILY_MONTHLY_CREDIT_CAP`. Credentials alone do not enable it; an enabled but incomplete configuration fails the run rather than silently falling back. The cap is **credits, not dollars**, and is atomically counted in Postgres before every Phase 1B search request; expanded (advanced) searches consume two credits each. A focused Phase 1B scan makes five advanced searches (10 credits); an exact subvariant with no curated results, or with curated hits that yield zero saved listings after extraction, may make one additional base-reference fallback search (12 credits total). At Tavily's current $0.008 PAYG rate, `1250` is approximately a $10 cap before any account-level free credits. Phase 2 uses the provider prerequisites but is independent of the Phase 1B flag. The detail page’s **Refresh now** action is limited to five scans per day.
 
-The login is intentionally a single env-var password for this one-user app. It is not multi-user authentication.
+The login is intentionally a single env-var password for this one-user app. It is not multi-user authentication. Failed guesses are rate-limited (5 per 15 minutes per client IP, then a 15-minute cooldown), password checks are timing-safe, and rotating `APP_PASSWORD` invalidates existing web sessions immediately. OAuth connector tokens are separate — see Connectors below.
 
 ## CoWork metrics MCP
 
