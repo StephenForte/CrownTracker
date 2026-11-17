@@ -6,24 +6,13 @@ import { passwordsMatch } from "@/lib/mcp-remote";
 export const LOGIN_AUTH_FAILURE_LIMIT = 5;
 export const LOGIN_AUTH_FAILURE_WINDOW_SECONDS = 15 * 60;
 export const LOGIN_AUTH_COOLDOWN_SECONDS = 15 * 60;
+export const LOGIN_RATE_LIMIT_RETENTION_DAYS = 7;
 
+/** Single-user dashboard: one global bucket so spoofed XFF cannot rotate keys. */
+const LOGIN_GLOBAL_BUCKET = "login:global";
 const LOGIN_LOCK_NAMESPACE = 872352;
 
 type Queryable = Pick<PoolClient, "query">;
-
-function hash(value: string) {
-  return createHash("sha256").update(value).digest("base64url");
-}
-
-function clientIpBucket(request: Request | null) {
-  const forwarded = request?.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-  const raw = forwarded || request?.headers.get("x-real-ip")?.trim() || "unknown";
-  return hash(raw).slice(0, 24);
-}
-
-function loginBucket(request: Request | null) {
-  return `login:${clientIpBucket(request)}`;
-}
 
 function loginFailureLockId(bucketKey: string) {
   return createHash("sha256").update(bucketKey).digest().readInt32BE(0);
@@ -107,11 +96,10 @@ async function clearRateLimit(reader: Queryable, bucketKey: string) {
   await reader.query("DELETE FROM auth_login_rate_limits WHERE bucket_key = $1", [bucketKey]);
 }
 
-export async function loginFailureBlocked(request: Request | null) {
-  const bucket = loginBucket(request);
+export async function loginFailureBlocked(_request: Request | null = null) {
   const result = await db.query<{ blocked_until: Date | null; attempt_count: number; window_started_at: Date }>(
     "SELECT blocked_until, attempt_count, window_started_at FROM auth_login_rate_limits WHERE bucket_key = $1",
-    [bucket],
+    [LOGIN_GLOBAL_BUCKET],
   );
   return failureRowBlocked(result.rows[0]);
 }
@@ -121,13 +109,16 @@ export async function loginFailureBlocked(request: Request | null) {
  * even during cooldown so the owner is never locked out of a valid secret.
  * Concurrent wrong guesses share an advisory lock so they cannot exceed the
  * failure cap before a cooldown starts.
+ *
+ * Uses one global bucket (not client IP): this is a single-user app, and
+ * leftmost X-Forwarded-For is attacker-controlled on Render/Cloudflare.
  */
 export async function completeLoginPasswordAttempt(
-  request: Request | null,
+  _request: Request | null,
   provided: string,
   expected: string,
 ): Promise<"blocked" | "mismatch" | "ok"> {
-  const bucket = loginBucket(request);
+  const bucket = LOGIN_GLOBAL_BUCKET;
   const connection = await db.connect();
   try {
     await connection.query("BEGIN");
@@ -160,4 +151,14 @@ export async function completeLoginPasswordAttempt(
   } finally {
     connection.release();
   }
+}
+
+export async function cleanupLoginRateLimits(reader: Queryable = db) {
+  const result = await reader.query(
+    `DELETE FROM auth_login_rate_limits
+     WHERE updated_at < now() - ($1 || ' days')::interval
+       AND (blocked_until IS NULL OR blocked_until < now())`,
+    [LOGIN_RATE_LIMIT_RETENTION_DAYS],
+  );
+  return result.rowCount ?? 0;
 }

@@ -9,13 +9,16 @@ async function main() {
   const pool = new Pool({ connectionString: process.env.DATABASE_URL });
   try {
     const { cleanupMcpOAuthState } = await import("@/lib/mcp-oauth");
+    const { cleanupLoginRateLimits } = await import("@/lib/login-rate-limit");
     const result = await cleanupMcpOAuthState(pool);
+    const loginRateLimitsDeleted = await cleanupLoginRateLimits(pool);
     console.log(JSON.stringify({
       event: "mcp_oauth_cleanup",
       codesDeleted: result.codesDeleted,
       tokensDeleted: result.tokensDeleted,
       clientsDeleted: result.clientsDeleted,
       rateLimitsDeleted: result.rateLimitsDeleted,
+      loginRateLimitsDeleted,
     }));
   } finally {
     await pool.end();
