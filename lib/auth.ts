@@ -10,8 +10,13 @@ function secret() {
   return value;
 }
 
+/** HMAC material changes when APP_PASSWORD rotates, so old cookies stop verifying. */
+function passwordBinding() {
+  return createHmac("sha256", secret()).update(`app-password:${process.env.APP_PASSWORD ?? ""}`).digest("base64url");
+}
+
 function sign(value: string) {
-  return createHmac("sha256", secret()).update(value).digest("base64url");
+  return createHmac("sha256", secret()).update(`${passwordBinding()}.${value}`).digest("base64url");
 }
 
 export function createSessionValue() {

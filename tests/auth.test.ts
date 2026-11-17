@@ -4,132 +4,114 @@ import test from "node:test";
 import { createSessionValue, isValidSession } from "@/lib/auth";
 
 const testSecret = "test-secret-that-is-at-least-32-characters-long";
+const testPassword = "test-app-password";
+
+function withAuthEnv(run: () => void) {
+  const originalSecret = process.env.SESSION_SECRET;
+  const originalPassword = process.env.APP_PASSWORD;
+  process.env.SESSION_SECRET = testSecret;
+  process.env.APP_PASSWORD = testPassword;
+  try {
+    run();
+  } finally {
+    process.env.SESSION_SECRET = originalSecret;
+    process.env.APP_PASSWORD = originalPassword;
+  }
+}
+
+function passwordBinding(secret: string, password: string) {
+  return createHmac("sha256", secret).update(`app-password:${password}`).digest("base64url");
+}
+
+function signPayload(payload: string, secret = testSecret, password = testPassword) {
+  return createHmac("sha256", secret).update(`${passwordBinding(secret, password)}.${payload}`).digest("base64url");
+}
 
 test("createSessionValue returns a signed payload", () => {
-  const originalSecret = process.env.SESSION_SECRET;
-  process.env.SESSION_SECRET = testSecret;
-
-  try {
+  withAuthEnv(() => {
     const session = createSessionValue();
     assert.ok(session.includes("."), "Session should contain payload.signature format");
     const [payload, signature] = session.split(".");
     assert.ok(payload.length > 0, "Payload should not be empty");
     assert.ok(signature.length > 0, "Signature should not be empty");
-  } finally {
-    process.env.SESSION_SECRET = originalSecret;
-  }
+  });
 });
 
 test("createSessionValue payload contains role and expiresAt", () => {
-  const originalSecret = process.env.SESSION_SECRET;
-  process.env.SESSION_SECRET = testSecret;
-
-  try {
+  withAuthEnv(() => {
     const session = createSessionValue();
     const [payload] = session.split(".");
     const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
     assert.equal(decoded.role, "owner");
     assert.ok(typeof decoded.expiresAt === "number");
     assert.ok(decoded.expiresAt > Date.now());
-  } finally {
-    process.env.SESSION_SECRET = originalSecret;
-  }
+  });
 });
 
 test("isValidSession returns false for undefined", () => {
-  const originalSecret = process.env.SESSION_SECRET;
-  process.env.SESSION_SECRET = testSecret;
-
-  try {
+  withAuthEnv(() => {
     assert.equal(isValidSession(undefined), false);
-  } finally {
-    process.env.SESSION_SECRET = originalSecret;
-  }
+  });
 });
 
 test("isValidSession returns false for empty string", () => {
-  const originalSecret = process.env.SESSION_SECRET;
-  process.env.SESSION_SECRET = testSecret;
-
-  try {
+  withAuthEnv(() => {
     assert.equal(isValidSession(""), false);
-  } finally {
-    process.env.SESSION_SECRET = originalSecret;
-  }
+  });
 });
 
 test("isValidSession returns false for malformed token (no dot)", () => {
-  const originalSecret = process.env.SESSION_SECRET;
-  process.env.SESSION_SECRET = testSecret;
-
-  try {
+  withAuthEnv(() => {
     assert.equal(isValidSession("invalidtoken"), false);
-  } finally {
-    process.env.SESSION_SECRET = originalSecret;
-  }
+  });
 });
 
 test("isValidSession returns false for invalid signature", () => {
-  const originalSecret = process.env.SESSION_SECRET;
-  process.env.SESSION_SECRET = testSecret;
-
-  try {
+  withAuthEnv(() => {
     const payload = Buffer.from(JSON.stringify({ role: "owner", expiresAt: Date.now() + 1000000 })).toString("base64url");
     assert.equal(isValidSession(`${payload}.invalidsignature`), false);
-  } finally {
-    process.env.SESSION_SECRET = originalSecret;
-  }
+  });
 });
 
 test("isValidSession returns false for expired session", () => {
-  const originalSecret = process.env.SESSION_SECRET;
-  process.env.SESSION_SECRET = testSecret;
-
-  try {
-    // Sign a genuinely expired payload so failure is due to expiry, not HMAC mismatch
+  withAuthEnv(() => {
     const expiredPayload = Buffer.from(
       JSON.stringify({ role: "owner", expiresAt: Date.now() - 1000 }),
     ).toString("base64url");
-    const signature = createHmac("sha256", testSecret).update(expiredPayload).digest("base64url");
+    const signature = signPayload(expiredPayload);
 
     assert.equal(isValidSession(`${expiredPayload}.${signature}`), false);
-  } finally {
-    process.env.SESSION_SECRET = originalSecret;
-  }
+  });
 });
 
 test("isValidSession returns true for valid session", () => {
-  const originalSecret = process.env.SESSION_SECRET;
-  process.env.SESSION_SECRET = testSecret;
-
-  try {
+  withAuthEnv(() => {
     const session = createSessionValue();
     assert.equal(isValidSession(session), true);
-  } finally {
-    process.env.SESSION_SECRET = originalSecret;
-  }
+  });
 });
 
 test("isValidSession uses timing-safe comparison", () => {
-  const originalSecret = process.env.SESSION_SECRET;
-  process.env.SESSION_SECRET = testSecret;
-
-  try {
+  withAuthEnv(() => {
     const session = createSessionValue();
     const [payload, signature] = session.split(".");
     const tamperedSignature = signature.slice(0, -1) + (signature.slice(-1) === "a" ? "b" : "a");
 
     assert.equal(isValidSession(`${payload}.${tamperedSignature}`), false);
-  } finally {
-    process.env.SESSION_SECRET = originalSecret;
-  }
+  });
+});
+
+test("rotating APP_PASSWORD invalidates existing sessions", () => {
+  withAuthEnv(() => {
+    const session = createSessionValue();
+    assert.equal(isValidSession(session), true);
+    process.env.APP_PASSWORD = "rotated-password";
+    assert.equal(isValidSession(session), false);
+  });
 });
 
 test("session expires in approximately 30 days", () => {
-  const originalSecret = process.env.SESSION_SECRET;
-  process.env.SESSION_SECRET = testSecret;
-
-  try {
+  withAuthEnv(() => {
     const session = createSessionValue();
     const [payload] = session.split(".");
     const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
@@ -138,7 +120,5 @@ test("session expires in approximately 30 days", () => {
     const expectedExpiry = Date.now() + thirtyDaysMs;
 
     assert.ok(Math.abs(decoded.expiresAt - expectedExpiry) < 1000, "Expiry should be ~30 days from now");
-  } finally {
-    process.env.SESSION_SECRET = originalSecret;
-  }
+  });
 });
